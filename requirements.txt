@@ -1,0 +1,22 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+streamlit==1.41.1
+chromadb==0.6.3
+SQLAlchemy==2.0.37
+sentence-transformers==3.3.1
+pydantic-settings==2.6.1
+python-dotenv==1.1.0
+presidio-analyzer==2.2.358
+presidio-anonymizer==2.2.358
+spacy==3.8.3
+httpx==0.28.1
+openai==1.58.1
+pytest==8.3.4
+pytest-cov==6.0.0
+ruff==0.8.3
+locust==2.32.2
+numpy==2.2.0
+pandas==2.2.3
+
+# Install spaCy model:
+# python -m spacy download en_core_web_sm
