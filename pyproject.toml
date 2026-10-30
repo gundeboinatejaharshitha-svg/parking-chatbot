@@ -1,0 +1,25 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "chroma_db"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# Protected files are final and must never need editing to satisfy the linter.
+[tool.ruff.lint.per-file-ignores]
+"app/data/sql_store.py" = ["E501"]
+"app/data/seed.py" = ["E501"]
+"scripts/verify_sql_store.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "scripts", "tests", "evaluation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+filterwarnings = [
+    # chromadb 0.6.3 internals; not ours to fix
+    "ignore:Accessing the 'model_fields' attribute:DeprecationWarning",
+]
