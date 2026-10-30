@@ -2,6 +2,7 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 streamlit==1.41.1
 chromadb==0.6.3
+posthog==5.4.0  # chromadb 0.6.3 telemetry client breaks on posthog>=6 (telemetry is disabled anyway)
 SQLAlchemy==2.0.37
 sentence-transformers==3.3.1
 pydantic-settings==2.6.1
