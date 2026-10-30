@@ -127,7 +127,7 @@ handles `sqlite://` in-memory for tests. Public methods:
   always require reference + plate and return the same not-found reply for wrong plate or
   unknown reference. "cancel"/"stop"/"never mind" abort any flow.
 - **Parsers** (`app/chatbot/parsing.py`) are deterministic regex helpers for dates, times, time
-  ranges, plates (must contain a digit), references, names, yes/no and weekdays.
+  ranges, plates (2-8 alphanumerics after normalization), references, names, yes/no and weekdays.
 - New settings: `RAG_MIN_SCORE`, `LLM_TEMPERATURE`, `LLM_TIMEOUT_SECONDS`.
 - Manual check: `python -m scripts.chat_cli` (needs seed + ingest + a working LLM).
 
@@ -138,7 +138,34 @@ handles `sqlite://` in-memory for tests. Public methods:
   live. Set a real `LLM_API_KEY` or run Ollama to enable RAG answers.
 - Intent rules are English-only keyword heuristics; unknown phrasing falls back to RAG, which
   answers "I don't have that information" when retrieval is weak.
-- Sessions are in-memory objects; persistence/keying by client is Stage 3.
+- Sessions were initially in-memory objects; client-keyed API sessions are implemented in Stage 3.
+
+### Guardrails, API and UI (Stage 3)
+- **PII boundary:** `app/guardrails/pii.py` combines Presidio AnalyzerEngine + AnonymizerEngine
+  with deterministic recognition for CityPark booking references, labeled/common vehicle plates,
+  labeled names, emails, and credential-like values. The analyzer is initialized lazily; install
+  `en_core_web_sm` separately with `python -m spacy download en_core_web_sm`.
+- **LLM boundary:** `app/chatbot/rag.py` redacts the question and retrieved passage text before
+  calling the model, blocks direct instruction-override attempts in both, then filters generated
+  output. If PII processing fails, it returns the existing unavailable response without leaking
+  unfiltered model text. Project-public contact/location facts and the policy phrase “24 hours”
+  are allowlisted so useful static answers are preserved.
+- **Routing safety:** `app/chatbot/orchestrator.py` checks for prompt injection before intent
+  routing. Dynamic SQL answers and the code-validated booking, lookup and cancellation flows
+  remain outside the LLM path.
+- **HTTP API:** `app/main.py` exposes `GET /health`, `POST /chat`, and `GET /availability`.
+  API validation errors and unexpected failures use generic response bodies; availability stays
+  SQL-only. Reservation CRUD endpoints are not exposed.
+- **Sessions:** the API maps random UUID session identifiers to `ConversationSession` objects
+  in process memory and serializes each session's requests. IDs are bearer-like and must be kept
+  private. State is not durable, shared between workers, or authenticated; run one API worker.
+- **Streamlit:** `app/ui/streamlit_app.py` calls the FastAPI endpoint through
+  `app/ui/api_client.py`, stores per-browser chat history/session ID, and displays citations.
+- **Guardrail limitations:** Presidio/NER can miss or over-detect PII; deterministic rules cover
+  known project identifiers but cannot identify every possible registration or sensitive phrase.
+  The injection rules are heuristic rather than a complete prompt-injection defense. Install the
+  spaCy model before RAG use; model/guardrail failures intentionally fail closed. No auth, rate
+  limiting, session expiry/persistence, or multi-worker session store is included.
 
 ## How to resume in a new session
 1. Read this file and `.github/copilot-instructions.md`.
@@ -150,6 +177,6 @@ handles `sqlite://` in-memory for tests. Public methods:
 ## Progress
 - [x] Stage 1: Foundation + Data layer (SQL, static docs, vector store, ingestion)
 - [x] Stage 2: Chatbot core (LLM abstraction, RAG, intent routing, reservation flow)
-- [ ] Stage 3: Guardrails + FastAPI + Streamlit UI
+- [x] Stage 3: Guardrails + FastAPI + Streamlit UI
 - [ ] Stage 4: Tests + Evaluation (Recall@K, Precision@K, MRR, latency, report)
 - [ ] Stage 5: Docker, CI, README, slides, final review

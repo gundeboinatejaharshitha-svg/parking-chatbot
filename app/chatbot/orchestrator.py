@@ -32,6 +32,11 @@ from app.chatbot.reservation import (
 from app.config import Settings, get_settings
 from app.data.sql_store import SqlStore
 from app.data.vector_store import VectorStore
+from app.guardrails.input_filter import (
+    PROMPT_INJECTION_MESSAGE,
+    InputFilter,
+    PromptInjectionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,7 @@ class Orchestrator:
     sql_store: SqlStore
     rag: RagAnswerer
     now: Callable[[], dt.datetime] = field(default=dt.datetime.now)
+    input_filter: InputFilter = field(default_factory=InputFilter)
 
     def handle(self, message: str, session: ConversationSession) -> BotReply:
         """Process one user message within ``session`` and return the reply."""
@@ -79,6 +85,10 @@ class Orchestrator:
         text = message.strip()
         if not text:
             return BotReply("Please type a question or a request.", Intent.STATIC_QUESTION)
+        try:
+            self.input_filter.check_injection(text)
+        except PromptInjectionError:
+            return BotReply(PROMPT_INJECTION_MESSAGE, Intent.STATIC_QUESTION)
 
         if session.flow is not None:
             return self._continue_flow(text, session)

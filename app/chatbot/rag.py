@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from app.chatbot.llm import LLMClient
 from app.config import get_settings
 from app.data.vector_store import EmptyCollectionError, RetrievedChunk, VectorStore
+from app.guardrails.input_filter import (
+    PROMPT_INJECTION_MESSAGE,
+    InputFilter,
+    PromptInjectionError,
+)
+from app.guardrails.output_filter import OutputFilter
+from app.guardrails.pii import GuardrailProcessingError, PIIRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -72,12 +79,21 @@ class RagAnswerer:
         *,
         min_score: float | None = None,
         top_k: int | None = None,
+        input_filter: InputFilter | None = None,
+        output_filter: OutputFilter | None = None,
     ) -> None:
         settings = get_settings()
         self._store = vector_store
         self._llm = llm
         self._min_score = settings.rag_min_score if min_score is None else min_score
         self._top_k = top_k or settings.top_k
+        default_redactor = PIIRedactor()
+        self._input_filter = (
+            input_filter if input_filter is not None else InputFilter(redactor=default_redactor)
+        )
+        self._output_filter = (
+            output_filter if output_filter is not None else OutputFilter(redactor=default_redactor)
+        )
 
     @property
     def min_score(self) -> float:
@@ -106,10 +122,25 @@ class RagAnswerer:
         if not chunks:
             return RagAnswer(text=UNAVAILABLE_MESSAGE, sources=(), grounded=False)
 
-        system = SYSTEM_PROMPT.format(
-            unavailable=UNAVAILABLE_MESSAGE, context=format_context(chunks)
-        )
-        text = self._llm.complete(system, question)
+        try:
+            safe_question = self._input_filter.filter_with_values(question)
+            safe_context = self._input_filter.filter_with_values(format_context(chunks))
+        except PromptInjectionError:
+            return RagAnswer(text=PROMPT_INJECTION_MESSAGE, sources=(), grounded=False)
+        except GuardrailProcessingError:
+            logger.error("Input guardrail failed; refusing LLM request")
+            return RagAnswer(text=UNAVAILABLE_MESSAGE, sources=(), grounded=False)
+
+        system = SYSTEM_PROMPT.format(unavailable=UNAVAILABLE_MESSAGE, context=safe_context.text)
+        text = self._llm.complete(system, safe_question.text)
+        try:
+            text = self._output_filter.filter(
+                text,
+                sensitive_values=(*safe_question.sensitive_values, *safe_context.sensitive_values),
+            )
+        except GuardrailProcessingError:
+            logger.error("Output guardrail failed; refusing model response")
+            return RagAnswer(text=UNAVAILABLE_MESSAGE, sources=(), grounded=False)
         sources = tuple(
             SourceRef(id=c.id, source=c.source, section=c.section, score=round(c.score, 3))
             for c in chunks

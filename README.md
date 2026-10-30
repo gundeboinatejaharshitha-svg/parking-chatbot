@@ -13,6 +13,18 @@ Copy-Item .env.example .env            # then edit if needed
 .\.venv\Scripts\python -m app.data.ingest --reset   # ChromaDB: 38 chunks from app/data/static
 ```
 
+### PII model setup
+
+The Python dependencies include Presidio and spaCy, but spaCy's English model is a separate
+download. Install it once before using the guarded LLM/RAG path:
+
+```powershell
+.\.venv\Scripts\python -m spacy download en_core_web_sm
+```
+
+Tests inject fake analyzers and do not download or load this model. If the model or guardrail
+processing is unavailable at runtime, RAG fails closed and does not send the request to the LLM.
+
 ## Verify
 
 ```powershell
@@ -30,6 +42,34 @@ Copy-Item .env.example .env            # then edit if needed
 The chatbot answers policy questions from the knowledge base (RAG, with sources), live
 availability / prices / opening hours from SQLite, and walks you through booking, looking up
 or cancelling a reservation (booking reference + plate are always required together).
+
+## HTTP API and Streamlit UI
+
+Start the API in one PowerShell window:
+
+```powershell
+.\.venv\Scripts\python -m uvicorn app.main:app --reload
+```
+
+Then open `http://127.0.0.1:8000/docs` for the interactive API documentation. The implemented
+routes are:
+
+- `GET /health` — process health.
+- `POST /chat` — message processing and conversation continuity; the response returns a
+  `session_id` that the client sends on subsequent messages.
+- `GET /availability` — current SQL-backed availability, optionally filtered with
+  `?space_type=standard|compact|ev|disabled`.
+
+In another PowerShell window, launch the UI:
+
+```powershell
+.\.venv\Scripts\python -m streamlit run app/ui/streamlit_app.py
+```
+
+Set `API_BASE_URL` in `.env` if the FastAPI server is not at `http://127.0.0.1:8000`.
+Conversation sessions are held in process memory and are lost on restart; use one API worker
+for consistent session handling. The random session ID is a bearer-like identifier and should
+be kept private. The API does not provide user authentication or durable session storage.
 
 ### LLM configuration
 

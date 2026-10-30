@@ -75,6 +75,10 @@ class Settings(BaseSettings):
         gt=0.0,
         validation_alias=AliasChoices("LLM_TIMEOUT_SECONDS", "llm_timeout_seconds"),
     )
+    api_base_url: str = Field(
+        default="http://127.0.0.1:8000",
+        validation_alias=AliasChoices("API_BASE_URL", "api_base_url"),
+    )
 
     embedding_model: str = Field(
         default="sentence-transformers/all-MiniLM-L6-v2",
