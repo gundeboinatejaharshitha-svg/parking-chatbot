@@ -59,7 +59,8 @@ def install_routes(
 
     @app.exception_handler(Exception)
     async def unexpected_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-        logger.error("API request failed: %s", type(exc).__name__)
+        # Full traceback stays in server logs only; clients get a generic message.
+        logger.error("API request failed: %s", type(exc).__name__, exc_info=exc)
         return JSONResponse(
             status_code=500,
             content={"detail": "The request could not be completed."},

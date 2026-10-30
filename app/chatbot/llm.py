@@ -9,6 +9,7 @@ the defaults. Tests inject a fake ``LLMClient`` and never hit the network.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Protocol
 
 import openai
@@ -114,11 +115,38 @@ def build_llm_client(settings: Settings | None = None) -> LLMClient:
     )
 
 
+class LazyLLMClient:
+    """Defer ``build_llm_client`` until the first completion request.
+
+    The chatbot answers greetings, SQL questions and reservation flows without
+    an LLM, so a missing or placeholder key must not break those paths. Config
+    errors surface as ``LLMConfigurationError`` (an ``LLMError``) on the RAG
+    path, where callers already degrade to a safe fallback message.
+    """
+
+    def __init__(self, settings: Settings | None = None, factory: Any | None = None) -> None:
+        self._settings = settings
+        self._factory = factory or build_llm_client
+        self._client: LLMClient | None = None
+        self._lock = threading.Lock()
+
+    def _get_client(self) -> LLMClient:
+        with self._lock:
+            if self._client is None:
+                self._client = self._factory(self._settings)
+            return self._client
+
+    def complete(self, system: str, user: str) -> str:
+        """Build the real client on first use, then delegate to it."""
+        return self._get_client().complete(system, user)
+
+
 __all__ = [
     "OLLAMA_DEFAULT_BASE_URL",
     "LLMClient",
     "LLMConfigurationError",
     "LLMError",
+    "LazyLLMClient",
     "OpenAICompatibleClient",
     "build_llm_client",
 ]

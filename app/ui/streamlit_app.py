@@ -38,8 +38,8 @@ def main() -> None:
     client = ChatApiClient(get_settings().api_base_url)
     try:
         response = client.send_chat(message, st.session_state.citypark_session_id)
-    except ChatApiError:
-        reply = "I couldn't reach the chat service. Please try again in a moment."
+    except ChatApiError as exc:
+        reply = exc.user_message
         sources: list[dict[str, str | float]] = []
     else:
         st.session_state.citypark_session_id = str(response.session_id)

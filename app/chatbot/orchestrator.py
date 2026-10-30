@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.chatbot.intent import Intent, classify
-from app.chatbot.llm import LLMError, build_llm_client
+from app.chatbot.llm import LazyLLMClient, LLMError
 from app.chatbot.parsing import parse_space_type, parse_weekday
 from app.chatbot.rag import RagAnswerer, SourceRef
 from app.chatbot.reservation import (
@@ -193,7 +193,8 @@ def build_orchestrator(settings: Settings | None = None) -> Orchestrator:
     settings = settings or get_settings()
     sql_store = SqlStore.from_url(settings.sqlite_url)
     vector_store = VectorStore()
-    rag = RagAnswerer(vector_store, build_llm_client(settings))
+    # Lazy so SQL, greeting and reservation paths work without a configured LLM.
+    rag = RagAnswerer(vector_store, LazyLLMClient(settings))
     return Orchestrator(sql_store=sql_store, rag=rag)
 
 
