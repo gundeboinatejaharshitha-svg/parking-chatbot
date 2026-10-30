@@ -98,3 +98,76 @@ def test_streamlit_ui_shows_safe_error_when_api_is_unavailable(
     assert app.session_state["citypark_messages"][-1]["content"] == (
         "I couldn't reach the chat service. Please try again in a moment."
     )
+
+
+def test_quick_action_button_sends_its_real_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_id = uuid.uuid4()
+    sent: list[str] = []
+
+    def record(_client: ChatApiClient, message: str, _session_id: object = None) -> ChatResponse:
+        sent.append(message)
+        return ChatResponse(
+            session_id=session_id, reply="Here is availability.", intent="availability"
+        )
+
+    monkeypatch.setattr(ChatApiClient, "send_chat", record)
+    script = Path(__file__).parents[1] / "app" / "ui" / "streamlit_app.py"
+
+    app = AppTest.from_file(str(script)).run()
+    app.button(key="quick_action_Check Availability").click().run()
+
+    assert sent == ["What parking slots are available?"]
+    assert app.session_state["citypark_messages"][0]["content"] == (
+        "What parking slots are available?"
+    )
+    assert app.session_state["citypark_messages"][1]["content"] == "Here is availability."
+
+
+def test_retry_button_resends_the_failed_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    session_id = uuid.uuid4()
+    calls = {"count": 0}
+
+    def flaky(_client: ChatApiClient, message: str, _session_id: object = None) -> ChatResponse:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise ChatApiError("down", "The chat service had a problem. Please try again.")
+        return ChatResponse(session_id=session_id, reply="Welcome back.", intent="greeting")
+
+    monkeypatch.setattr(ChatApiClient, "send_chat", flaky)
+    script = Path(__file__).parents[1] / "app" / "ui" / "streamlit_app.py"
+
+    app = AppTest.from_file(str(script)).run()
+    app.chat_input[0].set_value("hello").run()
+    assert app.session_state["citypark_last_failed_message"] == "hello"
+
+    retry_buttons = [b for b in app.button if b.label == "Retry last message"]
+    retry_buttons[0].click().run()
+
+    assert calls["count"] == 2
+    assert app.session_state["citypark_last_failed_message"] is None
+    assert app.session_state["citypark_messages"][-1]["content"] == "Welcome back."
+
+
+def test_waiting_indicator_shows_while_a_flow_is_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = uuid.uuid4()
+
+    def mid_flow(_client: ChatApiClient, _message: str, _session_id: object = None) -> ChatResponse:
+        return ChatResponse(
+            session_id=session_id,
+            reply="Which date would you like to park?",
+            intent="book",
+            flow="booking",
+            flow_done=False,
+        )
+
+    monkeypatch.setattr(ChatApiClient, "send_chat", mid_flow)
+    script = Path(__file__).parents[1] / "app" / "ui" / "streamlit_app.py"
+
+    app = AppTest.from_file(str(script)).run()
+    app.chat_input[0].set_value("I want to book parking").run()
+
+    assert app.session_state["citypark_waiting_for_more"] is True
+    captions = [c.value for c in app.caption]
+    assert "Waiting for a few more details to continue..." in captions
