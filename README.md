@@ -45,6 +45,26 @@ or cancelling a reservation (booking reference + plate are always required toget
 
 ## HTTP API and Streamlit UI
 
+For one-command startup on Windows PowerShell, run from the project root:
+
+```powershell
+.\start_app.ps1
+```
+
+The script reuses healthy services on ports 8000 and 8501, starts any missing service in a
+separate process, waits for both health endpoints, and opens the Streamlit page in your default
+browser. If a port is occupied by a service that is not healthy, it stops with an error instead
+of terminating or replacing that process. Startup logs and process IDs for services it starts
+are kept in the ignored `.app-startup\` folder.
+
+Stop only matching Python processes started and recorded by this project launcher:
+
+```powershell
+.\stop_app.ps1
+```
+
+Services that were already running and reused are not recorded or stopped by this command.
+
 Start the API in one PowerShell window:
 
 ```powershell
@@ -70,6 +90,21 @@ Set `API_BASE_URL` in `.env` if the FastAPI server is not at `http://127.0.0.1:8
 Conversation sessions are held in process memory and are lost on restart; use one API worker
 for consistent session handling. The random session ID is a bearer-like identifier and should
 be kept private. The API does not provide user authentication or durable session storage.
+
+### Optional startup at Windows sign-in
+
+To configure this yourself with Task Scheduler (the project scripts do not create a scheduled
+task or change Windows startup settings):
+
+1. Open **Task Scheduler** and select **Create Task**.
+2. On **General**, choose your account and select **Run only when user is logged on**.
+3. On **Triggers**, add **At log on** for your account.
+4. On **Actions**, choose **Start a program**:
+   - **Program/script:** `powershell.exe`
+   - **Add arguments:** `-NoProfile -ExecutionPolicy Bypass -File "C:\Users\GundeboinaTejaHarshi\Desktop\AI_practical_task\parking-chatbot\start_app.ps1"`
+   - **Start in:** `C:\Users\GundeboinaTejaHarshi\Desktop\AI_practical_task\parking-chatbot`
+5. Save and use **Run** to test the task. To stop the app, run `.\stop_app.ps1`; disable or
+   delete the task in Task Scheduler if you no longer want it at sign-in.
 
 ### LLM configuration
 
