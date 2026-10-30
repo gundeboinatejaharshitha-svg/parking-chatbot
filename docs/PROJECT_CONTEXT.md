@@ -167,6 +167,31 @@ handles `sqlite://` in-memory for tests. Public methods:
   spaCy model before RAG use; model/guardrail failures intentionally fail closed. No auth, rate
   limiting, session expiry/persistence, or multi-worker session store is included.
 
+### Chat HTTP 500 fix and interactive-conversation follow-up (post-Stage 3)
+- **Root cause:** `build_orchestrator` used to call `build_llm_client` eagerly, so an
+  unconfigured/placeholder `LLM_API_KEY` raised `LLMConfigurationError` on *every* `/chat`
+  request, including SQL-only ones. `app/chatbot/llm.py` now has `LazyLLMClient`, which defers
+  building the real client (and its config validation) until the RAG path's first `complete()`
+  call. SQL, greeting and reservation flows never touch the LLM, so they work with no key
+  configured; `tests/test_chat_regression.py` pins this exact regression end-to-end.
+- `app/api/routes.py`'s unexpected-error handler now logs the full traceback via `exc_info`
+  while still returning the generic body; `app/ui/api_client.py`'s `ChatApiError.user_message`
+  is a safe, situation-specific string (connection vs. validation vs. server error) instead of
+  one generic message.
+- **Follow-up context:** `classify()` in `app/chatbot/intent.py` now takes the previous turn's
+  SQL topic (`ConversationSession.last_topic`, one of availability/prices/hours) and reuses it
+  when a later message names a space type or day but has no topic keyword of its own (e.g. "Are
+  EV slots available?" then "What about standard parking?"), as long as it isn't a policy
+  question. This only affects messages that would otherwise fall through to RAG.
+- **Streamlit:** added the quick-action buttons (Check Availability, Book Parking, Parking
+  Information, Find My Booking, Cancel Booking) that send real messages through the same
+  `ChatApiClient` path, a loading spinner while waiting on the API, a retry button that resends
+  the last message after a `ChatApiError`, and a caption shown while a flow is still waiting for
+  more details (`response.flow` set and `flow_done` false).
+- The `BookingFlow`/`CancelFlow`/`LookupFlow` state machines only accept input for the current
+  step; there is no support yet for revising an earlier answer mid-flow (e.g. "actually make
+  that Friday" once already at the time-of-day step) short of aborting and restarting.
+
 ## How to resume in a new session
 1. Read this file and `.github/copilot-instructions.md`.
 2. Run `.\scripts\check.ps1` (ruff -> pytest -> seed --reset -> ingest --reset).
