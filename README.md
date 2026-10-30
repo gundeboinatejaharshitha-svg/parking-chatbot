@@ -21,4 +21,27 @@ Copy-Item .env.example .env            # then edit if needed
 .\.venv\Scripts\python -m scripts.verify_sql_store    # manual SqlStore walkthrough
 ```
 
+## Chat from the terminal
+
+```powershell
+.\.venv\Scripts\python -m scripts.chat_cli            # type 'exit' to quit
+```
+
+The chatbot answers policy questions from the knowledge base (RAG, with sources), live
+availability / prices / opening hours from SQLite, and walks you through booking, looking up
+or cancelling a reservation (booking reference + plate are always required together).
+
+### LLM configuration
+
+| Variable | OpenAI-compatible API | Ollama (local) |
+|---|---|---|
+| `LLM_PROVIDER` | `openai` | `ollama` |
+| `LLM_MODEL` | e.g. `gpt-4o-mini` | e.g. `llama3.2` |
+| `LLM_API_KEY` | required | ignored |
+| `LLM_BASE_URL` | empty for api.openai.com | defaults to `http://localhost:11434/v1` |
+
+`RAG_MIN_SCORE` (default `0.3`) is the cosine-similarity floor below which retrieved chunks
+are ignored; when nothing clears it the bot says it doesn't have that information instead of
+calling the model. Live availability, prices, hours and reservations never go through the LLM.
+
 Project decisions and progress are tracked in [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md).

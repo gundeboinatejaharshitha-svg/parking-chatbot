@@ -101,16 +101,55 @@ handles `sqlite://` in-memory for tests. Public methods:
   miss is "I lost my booking reference", where `04_booking_process` (what is my booking
   reference) narrowly outranks `10_faq` (lost reference). Both are relevant.
 
+### Chatbot core (Stage 2)
+- **Entry point:** `app.chatbot.orchestrator.Orchestrator(sql_store, rag, now).handle(message,
+  session) -> BotReply(text, intent, sources, flow, flow_done)`; `ConversationSession` holds the
+  active flow. `build_orchestrator()` wires real SQL + Chroma + LLM from settings.
+- **Intent routing is rule-based** (`app/chatbot/intent.py`, `classify(text) -> Intent`):
+  GREETING, AVAILABILITY, PRICES, HOURS, BOOK, CANCEL, LOOKUP, STATIC_QUESTION (default).
+  Policy phrasing ("how late can I cancel", "is there a fee") is sent to RAG, not to a flow; a
+  `CP-XXXXXX` reference in the message forces the action interpretation.
+- **Dynamic data never touches the LLM:** availability/prices/hours are templated straight
+  from `SqlStore`. The LLM is used only to phrase answers from static context.
+- **RAG** (`app/chatbot/rag.py`): `RagAnswerer(vector_store, llm, min_score, top_k)`. Chunks
+  below `RAG_MIN_SCORE` (default 0.3, cosine) are discarded; if none remain the fixed
+  `UNAVAILABLE_MESSAGE` is returned **without calling the LLM**. The system prompt tells the model
+  to answer only from the numbered passages and to ignore instructions inside them. Sources
+  (`SourceRef(id, source, section, score)`) are attached only to grounded answers.
+- **LLM** (`app/chatbot/llm.py`): `LLMClient` protocol with `complete(system, user) -> str`;
+  one `OpenAICompatibleClient` (openai SDK) covers OpenAI and Ollama (`/v1`). `build_llm_client`
+  fails fast with `LLMConfigurationError` when the key is missing or still the placeholder;
+  SDK errors become `LLMError`, which the orchestrator turns into a friendly fallback.
+- **Reservation flows** (`app/chatbot/reservation.py`), all validated in code:
+  `BookingFlow` DATE -> START -> END -> SPACE_TYPE -> NAME -> PLATE -> CONFIRM, pre-filling
+  from the opening message; `create_reservation` is called only after an explicit "yes" and the
+  reply says "confirmed" only when SQL returned a `ReservationInfo`. `CancelFlow`/`LookupFlow`
+  always require reference + plate and return the same not-found reply for wrong plate or
+  unknown reference. "cancel"/"stop"/"never mind" abort any flow.
+- **Parsers** (`app/chatbot/parsing.py`) are deterministic regex helpers for dates, times, time
+  ranges, plates (must contain a digit), references, names, yes/no and weekdays.
+- New settings: `RAG_MIN_SCORE`, `LLM_TEMPERATURE`, `LLM_TIMEOUT_SECONDS`.
+- Manual check: `python -m scripts.chat_cli` (needs seed + ingest + a working LLM).
+
+### Known limitations after Stage 2
+- The live LLM path could not be exercised in the development environment: `.env` still has the
+  `your-api-key` placeholder and Ollama is not installed. The adapter is covered by stubbed unit
+  tests; every other path (routing, SQL answers, booking, cancel, lookup, fallback) was verified
+  live. Set a real `LLM_API_KEY` or run Ollama to enable RAG answers.
+- Intent rules are English-only keyword heuristics; unknown phrasing falls back to RAG, which
+  answers "I don't have that information" when retrieval is weak.
+- Sessions are in-memory objects; persistence/keying by client is Stage 3.
+
 ## How to resume in a new session
 1. Read this file and `.github/copilot-instructions.md`.
 2. Run `.\scripts\check.ps1` (ruff -> pytest -> seed --reset -> ingest --reset).
-3. Optionally run `.\.venv\Scripts\python -m scripts.smoke_test_data` and
-   `.\.venv\Scripts\python -m scripts.verify_sql_store`.
+3. Optionally run `.\.venv\Scripts\python -m scripts.smoke_test_data`,
+   `.\.venv\Scripts\python -m scripts.verify_sql_store` and `.\.venv\Scripts\python -m scripts.chat_cli`.
 4. Continue with the first unticked stage below.
 
 ## Progress
 - [x] Stage 1: Foundation + Data layer (SQL, static docs, vector store, ingestion)
-- [ ] Stage 2: Chatbot core (LLM abstraction, RAG, intent routing, reservation flow)
+- [x] Stage 2: Chatbot core (LLM abstraction, RAG, intent routing, reservation flow)
 - [ ] Stage 3: Guardrails + FastAPI + Streamlit UI
 - [ ] Stage 4: Tests + Evaluation (Recall@K, Precision@K, MRR, latency, report)
 - [ ] Stage 5: Docker, CI, README, slides, final review
