@@ -64,6 +64,18 @@ class Settings(BaseSettings):
             return None
         return value
 
+    llm_temperature: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=2.0,
+        validation_alias=AliasChoices("LLM_TEMPERATURE", "llm_temperature"),
+    )
+    llm_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0.0,
+        validation_alias=AliasChoices("LLM_TIMEOUT_SECONDS", "llm_timeout_seconds"),
+    )
+
     embedding_model: str = Field(
         default="sentence-transformers/all-MiniLM-L6-v2",
         validation_alias=AliasChoices("EMBEDDING_MODEL", "embedding_model"),
@@ -81,6 +93,13 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
         validation_alias=AliasChoices("TOP_K", "top_k"),
+    )
+    rag_min_score: float = Field(
+        default=0.3,
+        ge=-1.0,
+        le=1.0,
+        description="Minimum cosine similarity for a chunk to count as relevant context.",
+        validation_alias=AliasChoices("RAG_MIN_SCORE", "rag_min_score"),
     )
     log_level: str = Field(
         default="INFO",
