@@ -9,10 +9,11 @@ layer either answers from the knowledge base or says it does not know.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from enum import Enum
 
-from app.chatbot.parsing import parse_booking_ref
+from app.chatbot.parsing import parse_booking_ref, parse_space_type, parse_weekday
 
 
 class Intent(str, Enum):
@@ -90,8 +91,14 @@ _POLICY_PRICE_CONTEXT = _any(
 _STATIC_HOURS_CONTEXT = _any(r"\b(overnight|24 hours (before|or more)|grace)\b")
 
 
-def classify(text: str) -> Intent:
-    """Classify a single user message into an ``Intent``."""
+def classify(text: str, last_topic: Intent | None = None) -> Intent:
+    """Classify a single user message into an ``Intent``.
+
+    ``last_topic`` is the previous turn's SQL-backed topic (availability,
+    prices or hours). A message with no topic keyword of its own but naming a
+    space type or a day (e.g. "what about standard?" after an availability
+    question) stays on that topic instead of falling through to RAG.
+    """
     message = text.strip()
     if not message:
         return Intent.STATIC_QUESTION
@@ -118,6 +125,13 @@ def classify(text: str) -> Intent:
         return Intent.PRICES
     if _AVAILABILITY.search(message) and not policy:
         return Intent.AVAILABILITY
+
+    if not policy and last_topic in (Intent.AVAILABILITY, Intent.PRICES):
+        if parse_space_type(message) is not None:
+            return last_topic
+    if not policy and last_topic is Intent.HOURS:
+        if parse_weekday(message, dt.date.today()) is not None:
+            return Intent.HOURS
     return Intent.STATIC_QUESTION
 
 

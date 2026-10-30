@@ -179,6 +179,37 @@ def test_llm_prompt_never_contains_reservation_rows(
         assert secret not in system and secret not in user
 
 
+def test_availability_followup_without_keyword_reuses_topic(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    reply = orch.handle("Are EV slots available?", session)
+    assert reply.intent is Intent.AVAILABILITY and "8 of 20 EV" in reply.text
+
+    reply = orch.handle("What about standard parking?", session)
+    assert reply.intent is Intent.AVAILABILITY
+    assert "84 of 120 standard" in reply.text
+
+    reply = orch.handle("and compact?", session)
+    assert reply.intent is Intent.AVAILABILITY and "24 of 40 compact" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_followup_topic_does_not_leak_into_an_unrelated_static_question(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    fake_llm.reply = "Use the Station Entrance."
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("Are EV slots available?", session)
+    reply = orch.handle("which entrance is closest to the station", session)
+
+    assert reply.intent is Intent.STATIC_QUESTION and reply.text == "Use the Station Entrance."
+
+
 def test_hours_for_tomorrow_uses_injected_clock(sql_store, vector_store, fake_llm, clock) -> None:
     clock.now = dt.datetime(2030, 1, 12, 9, 0)  # Saturday -> tomorrow is Sunday
     orch = _orchestrator(sql_store, vector_store, fake_llm, clock)

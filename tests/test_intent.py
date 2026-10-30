@@ -69,3 +69,29 @@ def test_policy_and_general_questions_go_to_rag(text: str) -> None:
 
 def test_booking_reference_forces_action_even_with_policy_words() -> None:
     assert classify("what is the refund if I cancel CP-100001") is Intent.CANCEL
+
+
+@pytest.mark.parametrize(
+    ("last_topic", "text", "expected"),
+    [
+        (Intent.AVAILABILITY, "what about standard parking?", Intent.AVAILABILITY),
+        (Intent.AVAILABILITY, "and compact?", Intent.AVAILABILITY),
+        (Intent.PRICES, "what about EV?", Intent.PRICES),
+        (Intent.HOURS, "what about friday?", Intent.HOURS),
+        (Intent.HOURS, "and tomorrow?", Intent.HOURS),
+    ],
+)
+def test_ambiguous_followup_reuses_last_sql_topic(
+    last_topic: Intent, text: str, expected: Intent
+) -> None:
+    assert classify(text, last_topic) is expected
+
+
+def test_followup_topic_is_ignored_without_a_resolvable_subtopic() -> None:
+    assert classify("what about that", Intent.AVAILABILITY) is Intent.STATIC_QUESTION
+
+
+def test_followup_topic_does_not_override_a_policy_question() -> None:
+    assert classify("what is the refund policy for standard", Intent.AVAILABILITY) is (
+        Intent.STATIC_QUESTION
+    )

@@ -57,6 +57,7 @@ class ConversationSession:
 
     flow: Flow | None = None
     turns: int = 0
+    last_topic: Intent | None = None
 
 
 @dataclass(frozen=True)
@@ -93,8 +94,11 @@ class Orchestrator:
         if session.flow is not None:
             return self._continue_flow(text, session)
 
-        intent = classify(text)
+        intent = classify(text, session.last_topic)
         logger.info("intent=%s turn=%d", intent.value, session.turns)
+
+        if intent in (Intent.AVAILABILITY, Intent.PRICES, Intent.HOURS):
+            session.last_topic = intent
 
         if intent is Intent.GREETING:
             return BotReply(WELCOME_MESSAGE, intent)
