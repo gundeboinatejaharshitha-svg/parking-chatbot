@@ -89,12 +89,19 @@ def test_parse_time_range(text: str, expected: tuple[dt.time, dt.time] | None) -
         ("AB12CDE", "AB12CDE"),
         ("ab 12 cde", "AB12CDE"),
         ("my plate is AB12 CDE", "AB12CDE"),
+        ("ABCD", "ABCD"),
+        ("a b-c d", "ABCD"),
+        ("CPABC", "CPABC"),
+        ("my plate is AB CD", "ABCD"),
         ("the car is te57-car", "TE57CAR"),
         ("CP-100001 and AB12CDE", "AB12CDE"),
+        ("hello", "HELLO"),
         ("cancel CP-100001", None),
-        ("hello", None),
-        ("1234", None),
+        ("hello there", None),
+        ("1234", "1234"),
         ("ABCDEFGHIJ12", None),
+        ("AB!CD", None),
+        ("A", None),
     ],
 )
 def test_parse_plate(text: str, expected: str | None) -> None:
@@ -106,6 +113,19 @@ def test_parse_booking_ref_normalises() -> None:
     assert parse_booking_ref("CP-100002") == "CP-100002"
     assert parse_booking_ref("CP-12345") is None
     assert parse_booking_ref("no ref") is None
+
+
+def test_plate_parser_matches_sql_store_normalization_contract() -> None:
+    from app.data.sql_store import normalize_plate
+
+    for raw in ("AB", "ABCDEFGH", "A B-C D", "ab-cd"):
+        parsed = parse_plate(raw)
+        assert parsed == normalize_plate(raw)
+        assert 2 <= len(parsed) <= 8
+        assert parsed.isalnum()
+
+    for raw in ("A", "ABCDEFGHI", "AB.CD", "AB/CD", "!!!"):
+        assert parse_plate(raw) is None
 
 
 def test_parse_name() -> None:

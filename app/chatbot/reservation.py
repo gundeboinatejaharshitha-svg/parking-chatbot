@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -362,10 +361,6 @@ NOT_FOUND_REPLY = (
     "I couldn't find a reservation matching that booking reference and plate. "
     "Please check both and try again."
 )
-_CANCEL_WORD = re.compile(r"\bcancel", re.IGNORECASE)
-_KEEP_WORD = re.compile(r"\b(don'?t|do not|not|keep|no)\b", re.IGNORECASE)
-
-
 @dataclass
 class _RefPlateFlow:
     """Shared collection of booking reference and plate."""
@@ -446,13 +441,6 @@ class CancelFlow(_RefPlateFlow):
     """Cancels a reservation after showing it and getting explicit confirmation."""
 
     name = "cancel"
-
-    def handle(self, text: str) -> FlowReply:
-        """Like the base flow, but "cancel it" at the confirmation step means yes."""
-        identified = self.booking_ref is not None and self.car_plate is not None
-        if identified and _CANCEL_WORD.search(text) and not _KEEP_WORD.search(text):
-            return self._do_cancel()
-        return super().handle(text)
 
     def _identified(self) -> FlowReply:
         info = self._fetch()

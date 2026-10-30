@@ -47,8 +47,15 @@ _TIME_RANGE = re.compile(
 )
 _BOOKING_REF = re.compile(r"\bCP\s*-?\s*(\d{6})\b", re.IGNORECASE)
 _PLATE_FULL = re.compile(r"^[A-Z0-9]{2,8}$")
+_PLATE_INPUT = re.compile(r"^[A-Z0-9\s-]+$", re.IGNORECASE)
+_PLATE_LABEL = re.compile(
+    r"\b(?:number plate|vehicle registration(?: number)?|registration(?: number)?|"
+    r"reg(?:istration)?|plate)\b\s*(?:(?:is|:|=)\s*)?",
+    re.IGNORECASE,
+)
 _PLATE_STOPWORDS = frozenset(
-    "A AN THE MY IS IT ITS ON IN AT TO OF AND FOR NO OK OKAY CAR REG PLATE NUMBER VEHICLE "
+    "A AN THE MY IS IT ITS ON IN AT TO OF AND FOR NO OK OKAY CAR CANCEL CANCELLATION "
+    "REG PLATE NUMBER VEHICLE "
     "REGISTRATION LICENSE LICENCE".split()
 )
 _NAME_PREFIX = re.compile(r"^(?:my name is|i am|i'm|it's|its|this is|name:?)\s+", re.IGNORECASE)
@@ -214,35 +221,58 @@ def parse_booking_ref(text: str) -> str | None:
 
 
 def parse_plate(text: str) -> str | None:
-    """Extract a vehicle plate (2-8 letters/digits after removing spaces and hyphens).
+    """Extract a plate accepted by SqlStore: 2-8 alphanumerics after normalization.
 
-    A message that is only a plate is accepted as-is; otherwise the first token
-    group that looks like a plate is used. Plates must contain at least one
-    digit so ordinary words are never mistaken for one.
+    Standalone values may contain letters, digits, spaces or hyphens; spaces and
+    hyphens are removed exactly as in ``normalize_plate``. In a sentence, an
+    explicit plate label permits alphabetic-only values. Otherwise extraction
+    requires a digit to avoid treating arbitrary words as plates.
     """
-    whole = normalize_plate(text)
-    if _is_plate(whole):
-        return whole
-    tokens = [t for t in re.split(r"[^A-Z0-9-]+", text.upper()) if t.strip("-")]
-    for size in (2, 1, 3):
+    raw = text.strip()
+    if _PLATE_INPUT.fullmatch(raw):
+        candidate = normalize_plate(raw)
+        if _is_plate(candidate) and not _is_booking_ref_only(raw):
+            return candidate
+
+    label = _PLATE_LABEL.search(text)
+    if label:
+        candidate = _plate_from_tokens(text[label.end() :], allow_alpha_only=True)
+        if candidate is not None:
+            return candidate
+
+    candidate = _plate_from_tokens(text, allow_alpha_only=False)
+    if candidate is not None:
+        return candidate
+    return None
+
+
+def _is_booking_ref_only(text: str) -> bool:
+    """Do not reinterpret a complete booking reference as a vehicle plate."""
+    reference = _BOOKING_REF.fullmatch(text.strip())
+    return reference is not None
+
+
+def _plate_from_tokens(text: str, *, allow_alpha_only: bool) -> str | None:
+    """Join nearby plate tokens and validate them using SqlStore's normalized rule."""
+    tokens = [token for token in re.split(r"[^A-Z0-9-]+", text.upper()) if token.strip("-")]
+    for size in (3, 2, 1):
         for start in range(len(tokens) - size + 1):
             window = tokens[start : start + size]
             if window[0] in _PLATE_STOPWORDS or window[-1] in _PLATE_STOPWORDS:
                 continue
-            if size > 1 and not any(c.isdigit() for c in window[0] + window[-1]):
-                continue
             candidate = normalize_plate("".join(window))
-            if _is_plate(candidate) and not candidate.startswith("CP"):
-                return candidate
+            if not _is_plate(candidate):
+                continue
+            if not allow_alpha_only and not any(char.isdigit() for char in candidate):
+                continue
+            if _BOOKING_REF.fullmatch("".join(window).replace("-", "")):
+                continue
+            return candidate
     return None
 
 
 def _is_plate(candidate: str) -> bool:
-    return bool(
-        _PLATE_FULL.match(candidate)
-        and any(c.isdigit() for c in candidate)
-        and any(c.isalpha() for c in candidate)
-    )
+    return _PLATE_FULL.fullmatch(candidate) is not None
 
 
 def parse_name(text: str) -> str | None:

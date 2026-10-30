@@ -63,7 +63,7 @@ def test_booking_step_by_step_with_validation(sql_store: SqlStore, clock: FakeCl
     assert "name" in flow.handle("compact").text.lower()
     assert "2-100 letters" in flow.handle("x").text
     assert "plate" in flow.handle("Bob Jones").text.lower()
-    assert "2-8 letters and digits" in flow.handle("hello").text
+    assert "2-8 letters and digits" in flow.handle("invalid!").text
     assert "Shall I confirm" in flow.handle("TE57CAR").text
     assert "yes to confirm" in flow.handle("maybe").text
 
@@ -147,19 +147,54 @@ def test_cancel_wrong_plate_and_unknown_ref_same_reply(sql_store: SqlStore) -> N
     assert sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status == "confirmed"
 
 
-def test_cancel_it_means_yes_and_keep_means_no(sql_store: SqlStore) -> None:
+def test_cancel_requires_matching_reference_plate_and_explicit_yes(sql_store: SqlStore) -> None:
+    before = _available(sql_store, "standard")
+
+    missing_plate = CancelFlow(sql_store)
+    assert "plate" in missing_plate.start("cancel CP-100001").text.lower()
+    reply = missing_plate.handle("cancel")
+    assert reply.done and reply.outcome is None
+    assert _available(sql_store, "standard") == before
+    assert sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status == "confirmed"
+
+    malformed_reference = CancelFlow(sql_store)
+    prompt = malformed_reference.start("cancel CP-12345 AB12CDE")
+    assert "booking reference" in prompt.text.lower()
+    assert _available(sql_store, "standard") == before
+
+    wrong_plate = CancelFlow(sql_store)
+    reply = wrong_plate.start("cancel CP-100001 plate ABCD")
+    assert reply.done and reply.text == NOT_FOUND_REPLY
+    assert _available(sql_store, "standard") == before
+
     flow = CancelFlow(sql_store)
-    flow.start("cancel CP-100002 CD34EFG")
+    prompt = flow.start("cancel CP-100001 AB12CDE")
+    assert not prompt.done and "Do you want to cancel it" in prompt.text
+    reply = flow.handle("cancel it")
+    assert reply.done and reply.outcome is None
+    assert _available(sql_store, "standard") == before
+    assert sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status == "confirmed"
+
+    confirmed = CancelFlow(sql_store)
+    confirmed.start("cancel CP-100001 AB12CDE")
+    reply = confirmed.handle("yes")
+    assert reply.done and reply.outcome is not None
+    assert _available(sql_store, "standard") == before + 1
+
+
+def test_cancel_no_and_ambiguous_responses_never_cancel(sql_store: SqlStore) -> None:
+    before = _available(sql_store, "standard")
+    flow = CancelFlow(sql_store)
+    flow.start("cancel CP-100001 AB12CDE")
     reply = flow.handle("no, keep it")
     assert reply.done and "unchanged" in reply.text
+    assert _available(sql_store, "standard") == before
 
     flow = CancelFlow(sql_store)
-    flow.start("cancel CP-100002 CD34EFG")
-    reply = flow.handle("yes cancel it")
-    assert reply.done and "has been cancelled" in reply.text
-
-    again = CancelFlow(sql_store).start("cancel CP-100002 CD34EFG")
-    assert again.done and "already cancelled" in again.text
+    flow.start("cancel CP-100001 AB12CDE")
+    reply = flow.handle("maybe cancel it")
+    assert not reply.done and "Please answer yes" in reply.text
+    assert _available(sql_store, "standard") == before
 
 
 def test_cancel_late_reports_no_refund(sql_store: SqlStore, clock: FakeClock) -> None:
