@@ -188,7 +188,7 @@ def test_cancellation_conversation_survives_corrections_through_the_real_api(
     session_id = start.json()["session_id"]
     assert start.json()["flow"] == "cancel"
 
-    for message in ["i want to cancel", "CP-123", "CP-123345", "TN 0234 FD 90088"]:
+    for message in ["i want to cancel", "CP-123", "CP-123345", "TN0234FD"]:
         response = client.post(
             "/chat", json={"message": message, "session_id": session_id}
         )

@@ -142,6 +142,28 @@ def test_parse_plate_ignores_an_approval_ref_token() -> None:
     assert parse_plate("AR-123456") is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["ap 03s 5673 90", "AP 03S 5673 90", "TN 0234 FD 90088 XY"],
+)
+def test_parse_plate_rejects_ambiguous_multi_token_input_instead_of_truncating(
+    text: str,
+) -> None:
+    # Regression: a garbled, over-long plate attempt split across several digit-bearing
+    # tokens must never be silently truncated to a coincidentally valid-shaped substring
+    # (e.g. "ap 03s 5673 90" must not become "AP03S"). Ambiguous input is rejected
+    # outright so the caller re-prompts, rather than storing a wrong plate.
+    assert parse_plate(text) is None
+
+
+def test_parse_plate_normalises_a_plate_typed_in_blocks() -> None:
+    # A legitimate plate typed as space-separated blocks still normalises correctly,
+    # since (unlike the ambiguous case above) the whole standalone input combines to
+    # exactly one valid-length plate.
+    assert parse_plate("AB 12 CDE") == "AB12CDE"
+    assert parse_plate("ab-12-cde") == "AB12CDE"
+
+
 def test_plate_parser_matches_sql_store_normalization_contract() -> None:
     from app.data.sql_store import normalize_plate
 

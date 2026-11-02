@@ -138,6 +138,15 @@ _NEGATIVE_WANT_PREFIX = re.compile(r"^i (don'?t|do not) want to\b")
 _GRATITUDE_PHRASE = re.compile(
     r"^(thanks( a lot| very much)?|thank you( very much)?|many thanks|thx)$"
 )
+# "What is my request ID?" / "repeat my request ID" / "what was the reference number" -
+# asking the bot to recall a Stage 2 approval request ID it already gave out, rather than
+# giving a fresh AR-XXXXXX/plate to look one up. Anchored to the end of the (stripped)
+# message so a genuine policy question like "what is the request process" is not caught.
+_REQUEST_ID_RECALL = _any(
+    r"\bwhat('s| is| was)?\s+(my|the)\s+(approval )?(request|reference)\s*(id|number)?[?!.]*$",
+    r"\b(repeat|remind me( of)?|tell me)\b.{0,20}\b(request|reference)\s*(id|number)?[?!.]*$",
+)
+
 _MORE_INFO = _any(
     r"^tell me more\b",
     r"^(can you )?explain (that|this|it)\b",
@@ -185,6 +194,8 @@ def classify(text: str, last_topic: Intent | None = None) -> Intent:
     if _GREETING.match(message):
         return Intent.GREETING
     if parse_approval_ref(message) is not None:
+        return Intent.APPROVAL_STATUS
+    if _REQUEST_ID_RECALL.search(message) is not None:
         return Intent.APPROVAL_STATUS
 
     policy = _POLICY_SIGNAL.search(message) is not None

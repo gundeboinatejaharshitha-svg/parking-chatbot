@@ -278,24 +278,55 @@ def _is_booking_ref_only(text: str) -> bool:
     )
 
 
+def _validate_plate_group(group: list[str], *, allow_alpha_only: bool) -> str | None:
+    """Validate a group of adjacent tokens as one plate candidate, or reject it."""
+    if not group:
+        return None
+    joined = "".join(group)
+    candidate = normalize_plate(joined)
+    if not _is_plate(candidate):
+        return None
+    if not allow_alpha_only and not any(char.isdigit() for char in candidate):
+        return None
+    ref_check = joined.replace("-", "")
+    if _BOOKING_REF.fullmatch(ref_check) or _APPROVAL_REF.fullmatch(ref_check):
+        return None
+    return candidate
+
+
 def _plate_from_tokens(text: str, *, allow_alpha_only: bool) -> str | None:
-    """Join nearby plate tokens and validate them using SqlStore's normalized rule."""
+    """Find a plate among the tokens of ``text``, validated with SqlStore's rule.
+
+    After an explicit label (``allow_alpha_only=True``), the caller already knows
+    the plate follows here, so every token up to the first stopword is joined into
+    one candidate (plates are often typed in blocks, e.g. "AB 12 CDE"). Without a
+    label, tokens from a free-form sentence are never joined across whitespace -
+    only one token at a time is tried (a hyphen *inside* a token, e.g. "TE57-CAR",
+    is kept) - and if more than one token independently looks like a plate, the
+    message is ambiguous and treated as not found rather than guessing one of
+    them (e.g. "ap 03s 5673 90" must not silently become "AP03S").
+    """
     tokens = [token for token in re.split(r"[^A-Z0-9-]+", text.upper()) if token.strip("-")]
-    for size in (3, 2, 1):
-        for start in range(len(tokens) - size + 1):
-            window = tokens[start : start + size]
-            if window[0] in _PLATE_STOPWORDS or window[-1] in _PLATE_STOPWORDS:
-                continue
-            candidate = normalize_plate("".join(window))
-            if not _is_plate(candidate):
-                continue
-            if not allow_alpha_only and not any(char.isdigit() for char in candidate):
-                continue
-            joined = "".join(window).replace("-", "")
-            if _BOOKING_REF.fullmatch(joined) or _APPROVAL_REF.fullmatch(joined):
-                continue
-            return candidate
-    return None
+
+    if allow_alpha_only:
+        group: list[str] = []
+        for token in tokens:
+            if token in _PLATE_STOPWORDS:
+                break
+            group.append(token)
+        return _validate_plate_group(group, allow_alpha_only=True)
+
+    found: str | None = None
+    for token in tokens:
+        if token in _PLATE_STOPWORDS:
+            continue
+        candidate = _validate_plate_group([token], allow_alpha_only=False)
+        if candidate is None:
+            continue
+        if found is not None and candidate != found:
+            return None  # more than one plausible plate token: ambiguous, don't guess
+        found = candidate
+    return found
 
 
 def _is_plate(candidate: str) -> bool:

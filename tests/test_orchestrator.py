@@ -736,3 +736,142 @@ def test_customer_sees_refusal_with_reason(
     refused = orch.handle(f"check request {request_id} CC12ZZZ", session)
     assert "not approved" in refused.text.lower()
     assert "No valid permit on file" in refused.text
+
+
+# ---- Stage 2 fixes: request ID recall, partial status lookups, plate rejection -------
+
+
+def test_request_id_recall_immediately_after_booking(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    """Regression: asking "What is my request ID?" right after a booking must answer
+    from session memory, not fall through to the LLM (which was reported as the bug -
+    the bot said the language model was unavailable)."""
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I'd like to book a standard space", session)
+    submitted = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    reply = orch.handle("What is my request ID?", session)
+
+    assert reply.intent is Intent.APPROVAL_STATUS
+    assert request_id in reply.text
+    assert fake_llm.calls == []
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["What is my request ID?", "Can you repeat my request ID?", "What was the reference number?"],
+)
+def test_request_id_recall_phrasing_variations(
+    question: str, sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    orch.handle("I'd like to book a standard space", session)
+    submitted = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    reply = orch.handle(question, session)
+
+    assert request_id in reply.text
+    assert fake_llm.calls == []
+
+
+def test_request_id_recall_with_multiple_requests_lists_both_without_confusion(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    """Two bookings in one session -> both IDs are recalled, clearly distinguished,
+    with the most recent one identified - never a mix-up between the two."""
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I'd like to book a standard space", session)
+    first = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    first_id = first.text.split("Request ID: ")[1].split(".")[0]
+
+    orch.handle("I'd like to book a compact space", session)
+    second = _chat(orch, session, "tomorrow", "2pm to 4pm", "Alice Morgan", "CC34EFG", "yes")
+    second_id = second.text.split("Request ID: ")[1].split(".")[0]
+    assert second_id != first_id
+
+    reply = orch.handle("What is my request ID?", session)
+
+    assert first_id in reply.text and second_id in reply.text
+    assert f"most recent one is {second_id}" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_request_id_recall_with_no_prior_request_does_not_guess(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    reply = orch.handle("What is my request ID?", ConversationSession())
+
+    assert "don't have a pending request" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_request_id_recall_when_llm_is_unavailable(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    orch.handle("I'd like to book a standard space", session)
+    submitted = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+    fake_llm.error = LLMError("down")
+
+    reply = orch.handle("What is my request ID?", session)
+
+    assert request_id in reply.text
+    assert reply.text != LLM_UNAVAILABLE_MESSAGE
+    assert fake_llm.calls == []
+
+
+def test_approval_status_lookup_with_only_request_id_asks_for_plate(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    orch.handle("I'd like to book a standard space", session)
+    submitted = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    reply = orch.handle(f"check request {request_id}", session)
+
+    assert request_id in reply.text
+    assert "vehicle plate" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_approval_status_lookup_with_wrong_plate_does_not_reveal_the_request(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    orch.handle("I'd like to book a standard space", session)
+    submitted = _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan", "AB12CDE", "yes")
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    reply = orch.handle(f"check request {request_id} ZZ99ZZZ", session)
+
+    assert "couldn't find a pending request" in reply.text
+
+
+def test_booking_plate_step_rejects_ambiguous_garbled_input_and_reprompts(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    """Regression: an over-long, ambiguous plate attempt must not be silently
+    truncated and accepted - the flow must stay on the plate step and re-ask."""
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    orch.handle("I'd like to book a standard space", session)
+    _chat(orch, session, "tomorrow", "10 to 12", "Alice Morgan")
+
+    reply = orch.handle("ap 03s 5673 90", session)
+
+    assert session.flow is not None and reply.flow == "booking"
+    assert "vehicle plate" in reply.text

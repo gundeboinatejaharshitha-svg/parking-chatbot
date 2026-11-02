@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.agents.approval_agent import ApprovalAgent, build_approval_agent
+from app.agents.approval_models import ApprovalRequest
 from app.chatbot.intent import (
     ConversationalCue,
     Intent,
@@ -34,6 +35,7 @@ from app.chatbot.reservation import (
     BookingFlow,
     CancelFlow,
     Flow,
+    FlowReply,
     LookupFlow,
 )
 from app.config import Settings, get_settings
@@ -86,6 +88,7 @@ class ConversationSession:
     last_intent: Intent | None = None
     last_static_question: str | None = None
     session_id: str = ""
+    approval_request_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -151,7 +154,7 @@ class Orchestrator:
         if intent in (Intent.BOOK, Intent.CANCEL, Intent.LOOKUP):
             return self._start_flow(intent, text, session)
         if intent is Intent.APPROVAL_STATUS:
-            return BotReply(self._check_approval_status(text), intent)
+            return BotReply(self._check_approval_status(text, session), intent)
         session.last_intent = intent
         session.last_static_question = text
         return self._static(text, intent)
@@ -171,6 +174,7 @@ class Orchestrator:
         else:
             flow = LookupFlow(self.sql_store)
         reply = flow.start(text)
+        self._remember_approval_request(reply, session)
         session.flow = None if reply.done else flow
         return BotReply(reply.text, intent, flow=flow.name, flow_done=reply.done)
 
@@ -178,10 +182,18 @@ class Orchestrator:
         flow = session.flow
         assert flow is not None
         reply = flow.handle(text)
+        self._remember_approval_request(reply, session)
         if reply.done:
             session.flow = None
         intent = {"booking": Intent.BOOK, "cancel": Intent.CANCEL}.get(flow.name, Intent.LOOKUP)
         return BotReply(reply.text, intent, flow=flow.name, flow_done=reply.done)
+
+    @staticmethod
+    def _remember_approval_request(reply: FlowReply, session: ConversationSession) -> None:
+        """Keep the AR-XXXXXX ID from a fresh submission so this session can recall it
+        later without asking the LLM or looking up another customer's request."""
+        if isinstance(reply.outcome, ApprovalRequest):
+            session.approval_request_ids.append(reply.outcome.id)
 
     def _detect_flow_switch(self, text: str, current_flow_name: str) -> Intent | None:
         """Detect a clear request to switch to a *different* reservation flow mid-conversation.
@@ -232,15 +244,22 @@ class Orchestrator:
         return self._static(combined, Intent.STATIC_QUESTION)
 
     # ---- Stage 2: human-in-the-loop approval status -----------------------------
-    def _check_approval_status(self, text: str) -> str:
-        request_id = parse_approval_ref(text)
-        plate = parse_plate(text)
+    def _check_approval_status(self, text: str, session: ConversationSession) -> str:
         if self.approval_agent is None:
             return "Approval requests aren't enabled for this assistant."
-        if request_id is None or plate is None:
+        request_id = parse_approval_ref(text)
+        plate = parse_plate(text)
+        if request_id is None and plate is None:
+            return self._recall_approval_request_id(session)
+        if request_id is not None and plate is None:
             return (
-                "Please give both the request ID (format AR-123456) and the vehicle plate "
-                "together so I can look it up."
+                f"I have your request ID ({request_id}), but I still need the vehicle plate "
+                "from that booking to verify it's you before I can check its status."
+            )
+        if request_id is None and plate is not None:
+            return (
+                "Please also give me the request ID (format AR-123456) so I can look up "
+                "the status together with that plate."
             )
         row = self.approval_agent.get_status(request_id, plate)
         if row is None:
@@ -259,6 +278,27 @@ class Orchestrator:
         if row.status == "expired":
             return f"Your request {row.id} expired before review. Please submit a new booking."
         return f"Your request {row.id} is still awaiting review. Please check back soon."
+
+    def _recall_approval_request_id(self, session: ConversationSession) -> str:
+        """Answer "what is my request ID" from this session's own memory - never the LLM,
+        and never another customer's request (only IDs created in this conversation)."""
+        ids = session.approval_request_ids
+        if not ids:
+            return (
+                "I don't have a pending request from this conversation yet. If you've "
+                "already submitted a booking, please give me the request ID (format "
+                "AR-123456) together with the vehicle plate so I can check its status."
+            )
+        if len(ids) == 1:
+            return (
+                f"Your request ID is {ids[0]}. Keep it together with your vehicle plate "
+                "to check its status."
+            )
+        others = ", ".join(ids[:-1])
+        return (
+            f"You've submitted {len(ids)} requests in this conversation: {others} and "
+            f"{ids[-1]}. The most recent one is {ids[-1]}."
+        )
 
     # ---- dynamic data (SQL only, no LLM) ----------------------------------------
     def _availability(self, text: str) -> str:
