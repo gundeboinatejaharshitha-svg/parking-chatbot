@@ -120,6 +120,8 @@ handles `sqlite://` in-memory for tests. Public methods:
   one `OpenAICompatibleClient` (openai SDK) covers OpenAI and Ollama (`/v1`). `build_llm_client`
   fails fast with `LLMConfigurationError` when the key is missing or still the placeholder;
   SDK errors become `LLMError`, which the orchestrator turns into a friendly fallback.
+  Generation defaults to local Ollama at `http://localhost:11434/v1` with `llama3.2:3b`;
+  no OpenAI API key or remote generation service is required.
 - **Reservation flows** (`app/chatbot/reservation.py`), all validated in code:
   `BookingFlow` DATE -> START -> END -> SPACE_TYPE -> NAME -> PLATE -> CONFIRM, pre-filling
   from the opening message; `create_reservation` is called only after an explicit "yes" and the
@@ -200,6 +202,13 @@ handles `sqlite://` in-memory for tests. Public methods:
 4. Continue with the first unticked stage below.
 
 ## Progress
+- [x] LLM verification: expanded offline provider/SDK/lazy-client regression tests and
+  added `python -m scripts.smoke_test_llm` for an explicit, synthetic-prompt live check.
+  Switched application and example configuration defaults to local Ollama (`llama3.2:3b`).
+  Verified the live token check and a real RAG answer about upper-level ramps using the
+  existing 38-chunk knowledge base, local cached embeddings and the real guardrails.
+  Live generation still requires valid provider configuration; passing offline tests or
+  SQL-only chat responses does not establish live model availability.
 - [x] Stage 1: Foundation + Data layer (SQL, static docs, vector store, ingestion)
 - [x] Stage 2: Chatbot core (LLM abstraction, RAG, intent routing, reservation flow)
 - [x] Stage 3: Guardrails + FastAPI + Streamlit UI

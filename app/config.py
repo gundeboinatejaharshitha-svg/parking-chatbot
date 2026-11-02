@@ -38,11 +38,11 @@ class Settings(BaseSettings):
     )
 
     llm_provider: Literal["openai", "ollama"] = Field(
-        default="openai",
+        default="ollama",
         validation_alias=AliasChoices("LLM_PROVIDER", "llm_provider"),
     )
     llm_model: str = Field(
-        default="gpt-4o-mini",
+        default="llama3.2:3b",
         validation_alias=AliasChoices("LLM_MODEL", "llm_model"),
     )
     llm_api_key: str = Field(

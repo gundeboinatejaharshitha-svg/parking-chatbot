@@ -213,8 +213,8 @@ All configuration lives in `.env` (see `.env.example`), loaded via `pydantic-set
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` or `ollama` | `openai` |
-| `LLM_MODEL` | model name, e.g. `gpt-4o-mini` or `llama3.2` | — |
+| `LLM_PROVIDER` | local `ollama` (default), or optional `openai` | `ollama` |
+| `LLM_MODEL` | installed Ollama model name | `llama3.2:3b` |
 | `LLM_API_KEY` | required for OpenAI; ignored for Ollama | — |
 | `LLM_BASE_URL` | empty for api.openai.com; defaults to `http://localhost:11434/v1` for Ollama | — |
 | `LLM_TEMPERATURE` / `LLM_TIMEOUT_SECONDS` | LLM call tuning | `0.0` / `30` |
@@ -229,6 +229,17 @@ All configuration lives in `.env` (see `.env.example`), loaded via `pydantic-set
 SQL-only conversations (availability, prices, hours, booking, lookup, cancellation) work with no
 `LLM_API_KEY` configured at all — the LLM client is built lazily and only touched by the RAG
 path (`app/chatbot/llm.py:LazyLLMClient`).
+
+For local generation, install [Ollama](https://ollama.com/download/windows), keep its server
+running, and download the configured model:
+
+```powershell
+ollama pull llama3.2:3b
+```
+
+The default configuration sends generation requests only to `http://localhost:11434/v1`.
+The OpenAI Python SDK is used as a protocol client for Ollama; it does not call OpenAI
+when configured this way. Restart the backend after changing `.env`.
 
 ## Running the backend and frontend
 
@@ -291,6 +302,21 @@ spaCy model first (see above) or those four tests will fail, not the rest of the
 .\.venv\Scripts\python -m scripts.smoke_test_data     # retrieval quality, prints RANK1 n/5
 .\.venv\Scripts\python -m scripts.verify_sql_store    # manual SqlStore walkthrough
 ```
+
+### Checking the language model
+
+```powershell
+.\.venv\Scripts\python -m pytest tests\test_llm.py tests\test_llm_smoke.py tests\test_rag.py -q
+.\.venv\Scripts\python -m scripts.smoke_test_llm
+```
+
+The pytest checks run offline, including provider errors, SDK response handling and lazy
+initialization. The separate smoke check uses the configured local Ollama model by default and
+sends only a synthetic prompt requesting `LLM_OK`. It exits with code 0 only for the
+expected reply, or code 1 for configuration/request failures or an unexpected reply. It does not
+test retrieval or answer quality. Keep Ollama running with the configured model installed.
+If you explicitly switch to a remote provider, that provider may charge for the request.
+Working greetings or SQL answers alone do not prove the LLM works: those paths bypass it.
 
 ## RAG evaluation (Recall@K / Precision@K)
 
