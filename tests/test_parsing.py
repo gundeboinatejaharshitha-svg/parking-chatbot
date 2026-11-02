@@ -7,6 +7,7 @@ import datetime as dt
 import pytest
 
 from app.chatbot.parsing import (
+    parse_approval_ref,
     parse_booking_ref,
     parse_date,
     parse_name,
@@ -126,6 +127,19 @@ def test_parse_booking_ref_normalises() -> None:
     assert parse_booking_ref("CP-100002") == "CP-100002"
     assert parse_booking_ref("CP-12345") is None
     assert parse_booking_ref("no ref") is None
+
+
+def test_parse_approval_ref_normalises() -> None:
+    assert parse_approval_ref("request ar 123456 please") == "AR-123456"
+    assert parse_approval_ref("AR-123456") == "AR-123456"
+    assert parse_approval_ref("no ref") is None
+
+
+def test_parse_plate_ignores_an_approval_ref_token() -> None:
+    # Regression: an AR-XXXXXX request ID must never be misread as the plate
+    # when both appear together, e.g. "check request AR-123456 AB12ZZZ".
+    assert parse_plate("check request AR-123456 AB12ZZZ") == "AB12ZZZ"
+    assert parse_plate("AR-123456") is None
 
 
 def test_plate_parser_matches_sql_store_normalization_contract() -> None:

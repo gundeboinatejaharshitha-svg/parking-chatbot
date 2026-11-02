@@ -75,6 +75,7 @@ def install_routes(
         service = _get_orchestrator(request)
         session_id, entry = _resolve_session(request, body.session_id)
         with entry.lock:
+            entry.conversation.session_id = str(session_id)
             result = service.handle(body.message, entry.conversation)
         return ChatResponse(
             session_id=session_id,

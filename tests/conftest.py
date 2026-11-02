@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import chromadb
 import pytest
 
+from app.agents.approval_store import ApprovalStore
 from app.data.seed import seed
 from app.data.sql_store import SqlStore, create_db_engine
 from app.data.vector_store import VectorStore
@@ -83,3 +84,9 @@ def sql_store(clock: FakeClock) -> SqlStore:
 @pytest.fixture
 def fake_llm() -> FakeLLM:
     return FakeLLM()
+
+
+@pytest.fixture
+def approval_store(clock: FakeClock) -> ApprovalStore:
+    """In-memory ApprovalStore (separate table, own engine) driven by the fake clock."""
+    return ApprovalStore(create_db_engine("sqlite://"), now=clock, ttl_hours=24.0)

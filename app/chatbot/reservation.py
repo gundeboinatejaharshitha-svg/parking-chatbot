@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
+from app.agents.approval_agent import ApprovalAgent
+from app.agents.approval_store import ApprovalDraft, DuplicateRequestError
 from app.chatbot.intent import ConversationalCue, classify_cue
 from app.chatbot.parsing import (
     parse_booking_ref,
@@ -135,6 +137,8 @@ class BookingFlow:
     store: SqlStore
     now: Callable[[], dt.datetime] = dt.datetime.now
     draft: BookingDraft = field(default_factory=BookingDraft)
+    approval_gateway: ApprovalAgent | None = None
+    session_id: str = ""
 
     name = "booking"
 
@@ -312,6 +316,8 @@ class BookingFlow:
         d = self.draft
         assert d.date and d.start_time and d.end_time and d.space_type and d.customer_name
         assert d.car_plate
+        if self.approval_gateway is not None:
+            return self._submit_for_approval(d)
         try:
             info = self.store.create_reservation(
                 customer_name=d.customer_name,
@@ -353,6 +359,52 @@ class BookingFlow:
             "Keep the reference and plate together; you'll need both to look up or cancel.",
             done=True,
             outcome=info,
+        )
+
+    def _submit_for_approval(self, d: BookingDraft) -> FlowReply:
+        """Stage 2: send the booking draft to Agent 2 instead of confirming directly."""
+        assert self.approval_gateway is not None
+        assert d.date and d.start_time and d.end_time and d.space_type
+        assert d.customer_name and d.car_plate
+        try:
+            result = self.approval_gateway.submit_request(
+                ApprovalDraft(
+                    session_id=self.session_id,
+                    customer_name=d.customer_name,
+                    car_plate=d.car_plate,
+                    date=d.date,
+                    start_time=d.start_time,
+                    end_time=d.end_time,
+                    space_type=d.space_type,
+                )
+            )
+        except NoAvailabilityError:
+            return FlowReply(
+                f"Sorry, no {SPACE_TYPE_LABELS[d.space_type]} spaces are currently available, "
+                "so I can't submit this for approval. Would you like to try another space type?",
+                done=True,
+            )
+        except DuplicateRequestError:
+            return FlowReply(
+                "You already have a matching request awaiting approval. "
+                "I'll let you know as soon as it's reviewed.",
+                done=True,
+            )
+
+        note = (
+            ""
+            if result.notified
+            else (
+                " (I couldn't reach the admin notification system, but your request is "
+                "saved and will still be reviewed.)"
+            )
+        )
+        return FlowReply(
+            f"Your reservation request has been sent to our team for approval. "
+            f"Request ID: {result.request.id}.{note} "
+            "Ask me to check its status any time with your request ID and plate.",
+            done=True,
+            outcome=result.request,
         )
 
 

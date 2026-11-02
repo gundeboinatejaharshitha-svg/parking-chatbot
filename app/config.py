@@ -110,6 +110,46 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LOG_LEVEL", "log_level"),
     )
 
+    # ---- Stage 2: human-in-the-loop reservation approval ----------------------
+    require_admin_approval: bool = Field(
+        default=True,
+        description=(
+            "New bookings enter PENDING_APPROVAL and are only confirmed after an "
+            "authenticated administrator approves them. Set false only to restore the "
+            "pre-Stage-2 direct-confirm behavior (e.g. for the CLI demo script)."
+        ),
+        validation_alias=AliasChoices("REQUIRE_ADMIN_APPROVAL", "require_admin_approval"),
+    )
+    admin_api_key: str = Field(
+        default="",
+        description="Required in the X-Admin-Key header to call /admin endpoints.",
+        validation_alias=AliasChoices("ADMIN_API_KEY", "admin_api_key"),
+    )
+    admin_notify_method: Literal["console", "email"] = Field(
+        default="console",
+        validation_alias=AliasChoices("ADMIN_NOTIFY_METHOD", "admin_notify_method"),
+    )
+    admin_email: str = Field(
+        default="",
+        validation_alias=AliasChoices("ADMIN_EMAIL", "admin_email"),
+    )
+    smtp_host: str = Field(default="", validation_alias=AliasChoices("SMTP_HOST", "smtp_host"))
+    smtp_port: int = Field(default=587, validation_alias=AliasChoices("SMTP_PORT", "smtp_port"))
+    smtp_username: str = Field(
+        default="", validation_alias=AliasChoices("SMTP_USERNAME", "smtp_username")
+    )
+    smtp_password: str = Field(
+        default="", validation_alias=AliasChoices("SMTP_PASSWORD", "smtp_password")
+    )
+    smtp_from: str = Field(default="", validation_alias=AliasChoices("SMTP_FROM", "smtp_from"))
+    approval_request_ttl_hours: float = Field(
+        default=24.0,
+        gt=0.0,
+        validation_alias=AliasChoices(
+            "APPROVAL_REQUEST_TTL_HOURS", "approval_request_ttl_hours"
+        ),
+    )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

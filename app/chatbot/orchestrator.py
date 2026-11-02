@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from app.agents.approval_agent import ApprovalAgent, build_approval_agent
 from app.chatbot.intent import (
     ConversationalCue,
     Intent,
@@ -26,7 +27,7 @@ from app.chatbot.intent import (
     classify_explicit_action,
 )
 from app.chatbot.llm import LazyLLMClient, LLMError
-from app.chatbot.parsing import parse_space_type, parse_weekday
+from app.chatbot.parsing import parse_approval_ref, parse_plate, parse_space_type, parse_weekday
 from app.chatbot.rag import RagAnswerer, SourceRef
 from app.chatbot.reservation import (
     SPACE_TYPE_LABELS,
@@ -84,6 +85,7 @@ class ConversationSession:
     last_topic: Intent | None = None
     last_intent: Intent | None = None
     last_static_question: str | None = None
+    session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,7 @@ class Orchestrator:
     rag: RagAnswerer
     now: Callable[[], dt.datetime] = field(default=dt.datetime.now)
     input_filter: InputFilter = field(default_factory=InputFilter)
+    approval_agent: ApprovalAgent | None = None
 
     def handle(self, message: str, session: ConversationSession) -> BotReply:
         """Process one user message within ``session`` and return the reply."""
@@ -147,6 +150,8 @@ class Orchestrator:
             return BotReply(self._hours(text), intent)
         if intent in (Intent.BOOK, Intent.CANCEL, Intent.LOOKUP):
             return self._start_flow(intent, text, session)
+        if intent is Intent.APPROVAL_STATUS:
+            return BotReply(self._check_approval_status(text), intent)
         session.last_intent = intent
         session.last_static_question = text
         return self._static(text, intent)
@@ -155,7 +160,12 @@ class Orchestrator:
     def _start_flow(self, intent: Intent, text: str, session: ConversationSession) -> BotReply:
         flow: Flow
         if intent is Intent.BOOK:
-            flow = BookingFlow(self.sql_store, now=self.now)
+            flow = BookingFlow(
+                self.sql_store,
+                now=self.now,
+                approval_gateway=self.approval_agent,
+                session_id=session.session_id,
+            )
         elif intent is Intent.CANCEL:
             flow = CancelFlow(self.sql_store)
         else:
@@ -220,6 +230,35 @@ class Orchestrator:
             return BotReply(UNCLEAR_MORE_INFO_REPLY, Intent.STATIC_QUESTION)
         combined = f"{session.last_static_question} {text.strip()}"
         return self._static(combined, Intent.STATIC_QUESTION)
+
+    # ---- Stage 2: human-in-the-loop approval status -----------------------------
+    def _check_approval_status(self, text: str) -> str:
+        request_id = parse_approval_ref(text)
+        plate = parse_plate(text)
+        if self.approval_agent is None:
+            return "Approval requests aren't enabled for this assistant."
+        if request_id is None or plate is None:
+            return (
+                "Please give both the request ID (format AR-123456) and the vehicle plate "
+                "together so I can look it up."
+            )
+        row = self.approval_agent.get_status(request_id, plate)
+        if row is None:
+            return (
+                "I couldn't find a pending request matching that ID and plate. "
+                "Please check both and try again."
+            )
+        if row.status == "approved":
+            return (
+                f"Great news - your request {row.id} was approved. "
+                f"Booking reference: {row.booking_ref}."
+            )
+        if row.status == "refused":
+            reason = f" Reason: {row.refusal_reason}." if row.refusal_reason else ""
+            return f"Your request {row.id} was not approved.{reason}"
+        if row.status == "expired":
+            return f"Your request {row.id} expired before review. Please submit a new booking."
+        return f"Your request {row.id} is still awaiting review. Please check back soon."
 
     # ---- dynamic data (SQL only, no LLM) ----------------------------------------
     def _availability(self, text: str) -> str:
@@ -286,7 +325,10 @@ def build_orchestrator(settings: Settings | None = None) -> Orchestrator:
     vector_store = VectorStore()
     # Lazy so SQL, greeting and reservation paths work without a configured LLM.
     rag = RagAnswerer(vector_store, LazyLLMClient(settings))
-    return Orchestrator(sql_store=sql_store, rag=rag)
+    approval_agent = (
+        build_approval_agent(settings, sql_store) if settings.require_admin_approval else None
+    )
+    return Orchestrator(sql_store=sql_store, rag=rag, approval_agent=approval_agent)
 
 
 __all__ = [

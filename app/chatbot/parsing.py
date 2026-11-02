@@ -46,6 +46,7 @@ _TIME_RANGE = re.compile(
     re.IGNORECASE,
 )
 _BOOKING_REF = re.compile(r"\bCP\s*-?\s*(\d{6})\b", re.IGNORECASE)
+_APPROVAL_REF = re.compile(r"\bAR\s*-?\s*(\d{6})\b", re.IGNORECASE)
 _PLATE_FULL = re.compile(r"^[A-Z0-9]{2,8}$")
 _PLATE_INPUT = re.compile(r"^[A-Z0-9\s-]+$", re.IGNORECASE)
 _PLATE_LABEL = re.compile(
@@ -235,6 +236,12 @@ def parse_booking_ref(text: str) -> str | None:
     return f"CP-{match.group(1)}" if match else None
 
 
+def parse_approval_ref(text: str) -> str | None:
+    """Extract a Stage 2 approval-request ID and normalise it to ``AR-XXXXXX``."""
+    match = _APPROVAL_REF.search(text)
+    return f"AR-{match.group(1)}" if match else None
+
+
 def parse_plate(text: str) -> str | None:
     """Extract a plate accepted by SqlStore: 2-8 alphanumerics after normalization.
 
@@ -264,9 +271,11 @@ def parse_plate(text: str) -> str | None:
 
 
 def _is_booking_ref_only(text: str) -> bool:
-    """Do not reinterpret a complete booking reference as a vehicle plate."""
-    reference = _BOOKING_REF.fullmatch(text.strip())
-    return reference is not None
+    """Do not reinterpret a complete booking/approval reference as a vehicle plate."""
+    stripped = text.strip()
+    return _BOOKING_REF.fullmatch(stripped) is not None or (
+        _APPROVAL_REF.fullmatch(stripped) is not None
+    )
 
 
 def _plate_from_tokens(text: str, *, allow_alpha_only: bool) -> str | None:
@@ -282,7 +291,8 @@ def _plate_from_tokens(text: str, *, allow_alpha_only: bool) -> str | None:
                 continue
             if not allow_alpha_only and not any(char.isdigit() for char in candidate):
                 continue
-            if _BOOKING_REF.fullmatch("".join(window).replace("-", "")):
+            joined = "".join(window).replace("-", "")
+            if _BOOKING_REF.fullmatch(joined) or _APPROVAL_REF.fullmatch(joined):
                 continue
             return candidate
     return None
@@ -330,6 +340,7 @@ def parse_weekday(text: str, today: dt.date) -> int | None:
 __all__ = [
     "MONTHS",
     "WEEKDAYS",
+    "parse_approval_ref",
     "parse_booking_ref",
     "parse_date",
     "parse_name",

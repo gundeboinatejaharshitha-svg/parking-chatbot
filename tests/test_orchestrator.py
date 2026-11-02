@@ -6,6 +6,9 @@ import datetime as dt
 
 import pytest
 
+from app.agents.approval_agent import ApprovalAgent
+from app.agents.approval_store import ApprovalStore
+from app.agents.notifications import ConsoleNotificationAdapter
 from app.chatbot.intent import Intent
 from app.chatbot.llm import LLMError
 from app.chatbot.orchestrator import (
@@ -23,7 +26,7 @@ from app.chatbot.orchestrator import (
 )
 from app.chatbot.rag import UNAVAILABLE_MESSAGE, RagAnswerer
 from app.data.ingest import Chunk
-from app.data.sql_store import SqlStore
+from app.data.sql_store import SqlStore, create_db_engine
 from app.data.vector_store import VectorStore
 from tests.conftest import FakeClock, FakeLLM
 from tests.guardrail_fakes import build_test_filters
@@ -35,6 +38,14 @@ ENTRANCE_CHUNK = Chunk(
     "Which entrance is closest to the station?",
     0,
 )
+
+
+def _default_approval_agent(sql_store: SqlStore, clock: FakeClock) -> ApprovalAgent:
+    """Mirrors the production default (``require_admin_approval=True``): every
+    orchestrator built via this helper now routes new bookings through approval,
+    the same as ``build_orchestrator()`` does with unmodified settings."""
+    approval_store = ApprovalStore(create_db_engine("sqlite://"), now=clock)
+    return ApprovalAgent(sql_store, approval_store, ConsoleNotificationAdapter())
 
 
 def _orchestrator(
@@ -50,7 +61,8 @@ def _orchestrator(
         input_filter=input_filter,
         output_filter=output_filter,
     )
-    return Orchestrator(sql_store=sql_store, rag=rag, now=clock)
+    approval_agent = _default_approval_agent(sql_store, clock)
+    return Orchestrator(sql_store=sql_store, rag=rag, now=clock, approval_agent=approval_agent)
 
 
 def _chat(orch: Orchestrator, session: ConversationSession, *messages: str) -> BotReply:
@@ -150,11 +162,19 @@ def test_full_booking_conversation_through_orchestrator(
     reply = _chat(orch, session, "tomorrow", "from 10 to 12", "Alice Morgan", "AB12CDE")
     assert "Shall I confirm" in reply.text and session.flow is not None
     reply = orch.handle("yes", session)
-    assert reply.flow_done and session.flow is None and "confirmed" in reply.text
+    # Stage 2: confirming now submits for administrator approval rather than
+    # creating the reservation directly - nothing is booked and availability is
+    # untouched until an authenticated administrator approves it.
+    assert reply.flow_done and session.flow is None
+    assert "sent to our team for approval" in reply.text
+    assert sql_store.get_availability("standard")[0].available == before
+    request_id = reply.text.split("Request ID: ")[1].split(".")[0]
+
+    decided = orch.approval_agent.decide(request_id, approve=True, actor="admin")
+    ref = decided.booking_ref
     assert sql_store.get_availability("standard")[0].available == before - 1
 
     # Reference + plate from the confirmation can be used to look it up and cancel it.
-    ref = reply.text.split("Reference: ")[1].split(".")[0]
     reply = orch.handle(f"check my booking {ref} AB12CDE", session)
     assert reply.intent is Intent.LOOKUP and "Found it" in reply.text and session.flow is None
     reply = _chat(orch, session, f"cancel {ref}", "AB12CDE", "yes")
@@ -343,7 +363,7 @@ def test_ok_while_waiting_for_a_cancellation_detail_is_rejected_not_accepted(
     assert "booking reference" in reply.text
 
 
-def test_explicit_booking_confirmation_creates_the_reservation(
+def test_explicit_booking_confirmation_submits_for_approval_not_immediate_booking(
     sql_store, vector_store, fake_llm, clock
 ) -> None:
     orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
@@ -355,7 +375,26 @@ def test_explicit_booking_confirmation_creates_the_reservation(
     reply = orch.handle("Yes, confirm my booking.", session)
 
     assert reply.flow_done and session.flow is None
-    assert "confirmed" in reply.text and "CP-" in reply.text
+    assert "sent to our team for approval" in reply.text and "AR-" in reply.text
+    assert sql_store.get_availability("standard")[0].available == before
+
+
+def test_admin_approval_after_explicit_confirmation_creates_the_reservation(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    before = sql_store.get_availability("standard")[0].available
+
+    orch.handle("I want to book parking.", session)
+    _chat(orch, session, "tomorrow", "10am to 12", "standard", "Alice Morgan", "AB12CDE")
+    reply = orch.handle("Yes, confirm my booking.", session)
+    request_id = reply.text.split("Request ID: ")[1].split(".")[0]
+
+    decided = orch.approval_agent.decide(request_id, approve=True, actor="admin")
+
+    assert decided.status == "approved" and decided.booking_ref.startswith("CP-")
+    assert sql_store.get_reservation_for_user(decided.booking_ref, "AB12CDE").status == "confirmed"
     assert sql_store.get_availability("standard")[0].available == before - 1
 
 
@@ -612,3 +651,88 @@ def test_restart_cancellation_after_exit(sql_store, vector_store, fake_llm, cloc
     reply = orch.handle("cancel", session)
     assert reply.intent is Intent.CANCEL and session.flow is not None
     assert "booking reference" in reply.text
+
+
+# ---- Stage 2: Agent 1 <-> Agent 2 human-in-the-loop approval integration ------------
+
+
+def _approval_orchestrator(sql_store, vector_store, fake_llm, clock, approval_agent):
+    rag = RagAnswerer(vector_store, fake_llm, min_score=0.0, top_k=1)
+    return Orchestrator(sql_store=sql_store, rag=rag, now=clock, approval_agent=approval_agent)
+
+
+def test_booking_with_approval_required_submits_request_instead_of_confirming(
+    sql_store, vector_store, fake_llm, clock, approval_store
+) -> None:
+    from app.agents.approval_agent import ApprovalAgent
+
+    class _Notifier:
+        def notify(self, request_id: str, message: str) -> None:
+            pass
+
+    agent = ApprovalAgent(sql_store, approval_store, _Notifier())
+    orch = _approval_orchestrator(sql_store, vector_store, fake_llm, clock, agent)
+    session = ConversationSession()
+    session.session_id = "sess-approval-1"
+    before = sql_store.get_availability("ev")[0].available
+
+    orch.handle("I'd like to book an EV space", session)
+    _chat(orch, session, "tomorrow", "10 to 12", "Jordan Reyes", "AB99XYZ")
+    reply = orch.handle("yes", session)
+
+    assert reply.flow_done and session.flow is None
+    assert "sent to our team for approval" in reply.text
+    assert "AR-" in reply.text
+    assert sql_store.get_availability("ev")[0].available == before  # not booked yet
+
+
+def test_customer_sees_approval_result_after_admin_decides(
+    sql_store, vector_store, fake_llm, clock, approval_store
+) -> None:
+    from app.agents.approval_agent import ApprovalAgent
+
+    class _Notifier:
+        def notify(self, request_id: str, message: str) -> None:
+            pass
+
+    agent = ApprovalAgent(sql_store, approval_store, _Notifier())
+    orch = _approval_orchestrator(sql_store, vector_store, fake_llm, clock, agent)
+    session = ConversationSession()
+    session.session_id = "sess-approval-2"
+
+    orch.handle("I'd like to book a standard space", session)
+    _chat(orch, session, "tomorrow", "10 to 12", "Jordan Reyes", "AB12ZZZ")
+    submitted = orch.handle("yes", session)
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    pending = orch.handle(f"check request {request_id} AB12ZZZ", session)
+    assert "awaiting" in pending.text
+
+    agent.decide(request_id, approve=True, actor="admin")
+    approved = orch.handle(f"check request {request_id} AB12ZZZ", session)
+    assert "approved" in approved.text.lower() and "CP-" in approved.text
+
+
+def test_customer_sees_refusal_with_reason(
+    sql_store, vector_store, fake_llm, clock, approval_store
+) -> None:
+    from app.agents.approval_agent import ApprovalAgent
+
+    class _Notifier:
+        def notify(self, request_id: str, message: str) -> None:
+            pass
+
+    agent = ApprovalAgent(sql_store, approval_store, _Notifier())
+    orch = _approval_orchestrator(sql_store, vector_store, fake_llm, clock, agent)
+    session = ConversationSession()
+    session.session_id = "sess-approval-3"
+
+    orch.handle("I'd like to book a compact space", session)
+    _chat(orch, session, "tomorrow", "10 to 12", "Jordan Reyes", "CC12ZZZ")
+    submitted = orch.handle("yes", session)
+    request_id = submitted.text.split("Request ID: ")[1].split(".")[0]
+
+    agent.decide(request_id, approve=False, actor="admin", reason="No valid permit on file")
+    refused = orch.handle(f"check request {request_id} CC12ZZZ", session)
+    assert "not approved" in refused.text.lower()
+    assert "No valid permit on file" in refused.text

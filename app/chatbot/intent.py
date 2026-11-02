@@ -13,7 +13,12 @@ import datetime as dt
 import re
 from enum import Enum
 
-from app.chatbot.parsing import parse_booking_ref, parse_space_type, parse_weekday
+from app.chatbot.parsing import (
+    parse_approval_ref,
+    parse_booking_ref,
+    parse_space_type,
+    parse_weekday,
+)
 
 
 class Intent(str, Enum):
@@ -26,6 +31,7 @@ class Intent(str, Enum):
     BOOK = "book"
     CANCEL = "cancel"
     LOOKUP = "lookup"
+    APPROVAL_STATUS = "approval_status"
     STATIC_QUESTION = "static_question"
 
 
@@ -178,6 +184,8 @@ def classify(text: str, last_topic: Intent | None = None) -> Intent:
         return Intent.STATIC_QUESTION
     if _GREETING.match(message):
         return Intent.GREETING
+    if parse_approval_ref(message) is not None:
+        return Intent.APPROVAL_STATUS
 
     policy = _POLICY_SIGNAL.search(message) is not None
     has_ref = parse_booking_ref(message) is not None
