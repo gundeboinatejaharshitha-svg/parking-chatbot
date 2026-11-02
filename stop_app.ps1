@@ -4,6 +4,7 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PythonExe = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $RuntimeDir = Join-Path $ProjectRoot ".app-startup"
 $StatePath = Join-Path $RuntimeDir "processes.json"
+$BrowserStatePath = Join-Path $RuntimeDir "browser-opened.json"
 
 function Get-Descendants {
     param([int]$ParentId)
@@ -23,7 +24,11 @@ function Test-ExpectedServiceCommand {
 
     $Normalized = $CommandLine.Replace("\", "/")
     if ($Service -eq "backend") {
-        return $Normalized.Contains("uvicorn app.main:app") -and $Normalized.Contains("--port 8000")
+        # "uvicorn" and "app.main:app" are not adjacent: start_app.ps1 inserts
+        # --app-dir "<root>" between them.
+        return $Normalized.Contains("uvicorn") `
+            -and $Normalized.Contains("app.main:app") `
+            -and $Normalized.Contains("--port 8000")
     }
     if ($Service -eq "frontend") {
         return $Normalized.Contains("streamlit") `
@@ -39,11 +44,15 @@ if (-not (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
 }
 
 try {
-    $TrackedProcesses = @(Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json)
+    # Assign the pipeline result first: ConvertFrom-Json emits a JSON array as a single
+    # pipeline object, so wrapping the pipeline directly in @(...) would double-nest it
+    # into a 1-element array of arrays instead of the expected per-entry array.
+    $LoadedState = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
 }
 catch {
     throw "Cannot read launcher process state at $StatePath. No processes were stopped."
 }
+$TrackedProcesses = @($LoadedState)
 
 $Remaining = @()
 foreach ($Entry in $TrackedProcesses) {
@@ -91,6 +100,11 @@ foreach ($Entry in $TrackedProcesses) {
 
     Stop-Process -Id $ProcessId -ErrorAction Stop
     Write-Host "Stopped launcher-started $($Entry.Service) process (PID $ProcessId)."
+
+    if ($Entry.Service -eq "frontend" -and (Test-Path -LiteralPath $BrowserStatePath -PathType Leaf)) {
+        # The next start_app.ps1 run should open a fresh tab for the new frontend process.
+        Remove-Item -LiteralPath $BrowserStatePath -Force
+    }
 }
 
 if ($Remaining.Count -gt 0) {

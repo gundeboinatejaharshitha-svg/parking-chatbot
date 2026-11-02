@@ -1,0 +1,468 @@
+{
+  "generated_at": "20261101T173959Z",
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "top_k": 5,
+  "query_count": 24,
+  "aggregate": {
+    "query_count": 24,
+    "mean_precision_at_3": 0.30555555555555547,
+    "mean_recall_at_3": 0.9583333333333334,
+    "mean_precision_at_5": 0.19166666666666674,
+    "mean_recall_at_5": 1.0
+  },
+  "results": [
+    {
+      "query_id": "rules-01",
+      "query": "What are the parking rules I need to follow here?",
+      "category": "parking_rules",
+      "relevant_ids": [
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0"
+      ],
+      "retrieved_ids": [
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0",
+        "01_general_info::02-what-is-the-maximum-vehicle-height::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "rules-02",
+      "query": "Where am I not allowed to stop or park?",
+      "category": "parking_rules",
+      "relevant_ids": [
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0"
+      ],
+      "retrieved_ids": [
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "10_faq::03-are-pets-allowed::0",
+        "10_faq::05-can-i-stay-overnight::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "rules-03",
+      "query": "What happens if I leave my car outside a marked bay?",
+      "category": "parking_rules",
+      "relevant_ids": [
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0"
+      ],
+      "retrieved_ids": [
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "08_ev_charging::02-what-are-the-rules-for-using-an-ev-bay::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "08_ev_charging::03-can-non-ev-drivers-use-an-ev-bay::0",
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "charges-01",
+      "query": "What payment methods do you accept for parking charges?",
+      "category": "parking_charges",
+      "relevant_ids": [
+        "06_payment_methods::01-which-payment-methods-are-accepted::0"
+      ],
+      "retrieved_ids": [
+        "06_payment_methods::01-which-payment-methods-are-accepted::0",
+        "06_payment_methods::02-do-i-pay-at-the-barrier-or-online::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "06_payment_methods::03-what-if-my-payment-fails::0",
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "charges-02",
+      "query": "Can I settle the parking charge online instead of at the barrier?",
+      "category": "parking_charges",
+      "relevant_ids": [
+        "06_payment_methods::02-do-i-pay-at-the-barrier-or-online::0"
+      ],
+      "retrieved_ids": [
+        "06_payment_methods::02-do-i-pay-at-the-barrier-or-online::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "08_ev_charging::03-can-non-ev-drivers-use-an-ev-bay::0",
+        "10_faq::05-can-i-stay-overnight::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "charges-03",
+      "query": "What should I do if my card is declined when paying for parking?",
+      "category": "parking_charges",
+      "relevant_ids": [
+        "06_payment_methods::03-what-if-my-payment-fails::0"
+      ],
+      "retrieved_ids": [
+        "06_payment_methods::03-what-if-my-payment-fails::0",
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0",
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0",
+        "06_payment_methods::01-which-payment-methods-are-accepted::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "location-01",
+      "query": "Where exactly is this parking facility located?",
+      "category": "location",
+      "relevant_ids": [
+        "02_location_directions::01-where-is-citypark-central-located::0"
+      ],
+      "retrieved_ids": [
+        "01_general_info::01-what-is::0",
+        "09_accessibility_and_services::01-where-are-the-disabled-bays::0",
+        "02_location_directions::01-where-is-citypark-central-located::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "location-02",
+      "query": "Which entrance should I use if I'm arriving from the train station?",
+      "category": "location",
+      "relevant_ids": [
+        "02_location_directions::02-which-entrance-is-closest-to-the-station::0"
+      ],
+      "retrieved_ids": [
+        "02_location_directions::02-which-entrance-is-closest-to-the-station::0",
+        "02_location_directions::03-which-entrance-is-closest-to-the-shoppin::0",
+        "07_security_safety::03-what-should-i-do-in-an-emergency-or-fire::0",
+        "04_booking_process::02-what-do-i-need-to-check-in-and-enter::0",
+        "06_payment_methods::02-do-i-pay-at-the-barrier-or-online::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "location-03",
+      "query": "How can I drive up to the higher parking levels?",
+      "category": "location",
+      "relevant_ids": [
+        "02_location_directions::04-how-do-drivers-reach-the-upper-levels-of::0"
+      ],
+      "retrieved_ids": [
+        "02_location_directions::04-how-do-drivers-reach-the-upper-levels-of::0",
+        "01_general_info::02-what-is-the-maximum-vehicle-height::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "09_accessibility_and_services::02-how-do-pedestrians-get-between-levels::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "booking-01",
+      "query": "How do I make a parking reservation and what information is needed?",
+      "category": "booking_instructions",
+      "relevant_ids": [
+        "04_booking_process::01-how-do-i-make-a-reservation-at-citypark::0"
+      ],
+      "retrieved_ids": [
+        "04_booking_process::01-how-do-i-make-a-reservation-at-citypark::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "06_payment_methods::01-which-payment-methods-are-accepted::0",
+        "01_general_info::01-what-is::0",
+        "04_booking_process::02-what-do-i-need-to-check-in-and-enter::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "booking-02",
+      "query": "What do I need to show at the gate to enter the car park?",
+      "category": "booking_instructions",
+      "relevant_ids": [
+        "04_booking_process::02-what-do-i-need-to-check-in-and-enter::0"
+      ],
+      "retrieved_ids": [
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "04_booking_process::01-how-do-i-make-a-reservation-at-citypark::0",
+        "04_booking_process::02-what-do-i-need-to-check-in-and-enter::0",
+        "09_accessibility_and_services::03-how-do-i-request-assistance::0"
+      ],
+      "precision_at_3": 0.0,
+      "recall_at_3": 0.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "booking-03",
+      "query": "What is a booking reference used for and where do I find it?",
+      "category": "booking_instructions",
+      "relevant_ids": [
+        "04_booking_process::03-what-is-my-booking-reference-and-how-is::0"
+      ],
+      "retrieved_ids": [
+        "04_booking_process::03-what-is-my-booking-reference-and-how-is::0",
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0",
+        "04_booking_process::01-how-do-i-make-a-reservation-at-citypark::0",
+        "05_cancellation_policy::04-can-i-change-my-booking::0",
+        "05_cancellation_policy::03-what-happens-if-i-do-not-show-up-for-a-b::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "cancel-01",
+      "query": "If I cancel my reservation, will I get my money back?",
+      "category": "cancellation_policy",
+      "relevant_ids": [
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0",
+        "05_cancellation_policy::02-can-i-get-a-refund::0"
+      ],
+      "retrieved_ids": [
+        "05_cancellation_policy::02-can-i-get-a-refund::0",
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0",
+        "06_payment_methods::03-what-if-my-payment-fails::0",
+        "05_cancellation_policy::03-what-happens-if-i-do-not-show-up-for-a-b::0",
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0"
+      ],
+      "precision_at_3": 0.6666666666666666,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.4,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "cancel-02",
+      "query": "What happens if I simply don't show up for my booking?",
+      "category": "cancellation_policy",
+      "relevant_ids": [
+        "05_cancellation_policy::03-what-happens-if-i-do-not-show-up-for-a-b::0"
+      ],
+      "retrieved_ids": [
+        "05_cancellation_policy::03-what-happens-if-i-do-not-show-up-for-a-b::0",
+        "06_payment_methods::03-what-if-my-payment-fails::0",
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0",
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0",
+        "05_cancellation_policy::04-can-i-change-my-booking::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "cancel-03",
+      "query": "Can I change the date or time on an existing booking?",
+      "category": "cancellation_policy",
+      "relevant_ids": [
+        "05_cancellation_policy::04-can-i-change-my-booking::0"
+      ],
+      "retrieved_ids": [
+        "05_cancellation_policy::04-can-i-change-my-booking::0",
+        "05_cancellation_policy::01-how-late-can-i-cancel-my-booking-for-fre::0",
+        "04_booking_process::01-how-do-i-make-a-reservation-at-citypark::0",
+        "05_cancellation_policy::02-can-i-get-a-refund::0",
+        "04_booking_process::03-what-is-my-booking-reference-and-how-is::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-01",
+      "query": "What kind of facility is CityPark Central?",
+      "category": "general_information",
+      "relevant_ids": [
+        "01_general_info::01-what-is::0"
+      ],
+      "retrieved_ids": [
+        "01_general_info::01-what-is::0",
+        "02_location_directions::01-where-is-citypark-central-located::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "10_faq::06-how-do-i-contact-citypark-central-suppor::0",
+        "10_faq::03-are-pets-allowed::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-02",
+      "query": "Is there a maximum vehicle height for entering the car park?",
+      "category": "general_information",
+      "relevant_ids": [
+        "01_general_info::02-what-is-the-maximum-vehicle-height::0"
+      ],
+      "retrieved_ids": [
+        "01_general_info::02-what-is-the-maximum-vehicle-height::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "02_location_directions::04-how-do-drivers-reach-the-upper-levels-of::0",
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-03",
+      "query": "Do you have charging points for electric vehicles?",
+      "category": "general_information",
+      "relevant_ids": [
+        "08_ev_charging::01-where-are-ev-bays-at-citypark-central-an::0"
+      ],
+      "retrieved_ids": [
+        "08_ev_charging::01-where-are-ev-bays-at-citypark-central-an::0",
+        "08_ev_charging::03-can-non-ev-drivers-use-an-ev-bay::0",
+        "08_ev_charging::02-what-are-the-rules-for-using-an-ev-bay::0",
+        "01_general_info::04-what-types-of-bay-are-available::0",
+        "10_faq::04-can-motorcycles-vans-and-large-vehicles::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-04",
+      "query": "Is the car park monitored by security cameras?",
+      "category": "general_information",
+      "relevant_ids": [
+        "07_security_safety::01-are-there-cameras-and-patrols::0"
+      ],
+      "retrieved_ids": [
+        "07_security_safety::01-are-there-cameras-and-patrols::0",
+        "07_security_safety::04-is-my-vehicle-and-its-contents-covered::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "01_general_info::01-what-is::0",
+        "10_faq::03-are-pets-allowed::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-05",
+      "query": "Where can I find the accessible parking bays?",
+      "category": "general_information",
+      "relevant_ids": [
+        "09_accessibility_and_services::01-where-are-the-disabled-bays::0"
+      ],
+      "retrieved_ids": [
+        "09_accessibility_and_services::01-where-are-the-disabled-bays::0",
+        "01_general_info::04-what-types-of-bay-are-available::0",
+        "08_ev_charging::01-where-are-ev-bays-at-citypark-central-an::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-06",
+      "query": "What should I do if I've lost my booking reference?",
+      "category": "general_information",
+      "relevant_ids": [
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0"
+      ],
+      "retrieved_ids": [
+        "10_faq::01-what-should-i-do-if-i-lose-my-booking-re::0",
+        "04_booking_process::03-what-is-my-booking-reference-and-how-is::0",
+        "05_cancellation_policy::04-can-i-change-my-booking::0",
+        "10_faq::02-what-should-i-do-if-i-lose-an-item::0",
+        "05_cancellation_policy::03-what-happens-if-i-do-not-show-up-for-a-b::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "general-07",
+      "query": "Are pets allowed inside the car park?",
+      "category": "general_information",
+      "relevant_ids": [
+        "10_faq::03-are-pets-allowed::0"
+      ],
+      "retrieved_ids": [
+        "10_faq::03-are-pets-allowed::0",
+        "03_parking_rules::01-what-are-the-standard-parking-rules::0",
+        "03_parking_rules::02-where-is-stopping-or-parking-prohibited::0",
+        "03_parking_rules::03-what-happens-if-i-park-outside-a-marked::0",
+        "07_security_safety::04-is-my-vehicle-and-its-contents-covered::0"
+      ],
+      "precision_at_3": 0.3333333333333333,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.2,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "no-match-01",
+      "query": "What is the capital of France?",
+      "category": "out_of_scope",
+      "relevant_ids": [],
+      "retrieved_ids": [
+        "02_location_directions::01-where-is-citypark-central-located::0",
+        "02_location_directions::02-which-entrance-is-closest-to-the-station::0",
+        "01_general_info::01-what-is::0",
+        "01_general_info::03-what-parking-levels-does-citypark-centra::0",
+        "02_location_directions::03-which-entrance-is-closest-to-the-shoppin::0"
+      ],
+      "precision_at_3": 0.0,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 1.0
+    },
+    {
+      "query_id": "no-match-02",
+      "query": "Can you recommend a good restaurant in the city center?",
+      "category": "out_of_scope",
+      "relevant_ids": [],
+      "retrieved_ids": [
+        "02_location_directions::01-where-is-citypark-central-located::0",
+        "01_general_info::01-what-is::0",
+        "01_general_info::04-what-types-of-bay-are-available::0",
+        "02_location_directions::03-which-entrance-is-closest-to-the-shoppin::0",
+        "06_payment_methods::01-which-payment-methods-are-accepted::0"
+      ],
+      "precision_at_3": 0.0,
+      "recall_at_3": 1.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 1.0
+    }
+  ]
+}

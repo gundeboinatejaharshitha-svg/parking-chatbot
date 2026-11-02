@@ -18,7 +18,13 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from app.chatbot.intent import Intent, classify
+from app.chatbot.intent import (
+    ConversationalCue,
+    Intent,
+    classify,
+    classify_cue,
+    classify_explicit_action,
+)
 from app.chatbot.llm import LazyLLMClient, LLMError
 from app.chatbot.parsing import parse_space_type, parse_weekday
 from app.chatbot.rag import RagAnswerer, SourceRef
@@ -49,15 +55,35 @@ LLM_UNAVAILABLE_MESSAGE = (
     "Sorry, I can't answer that right now because the language model is unavailable. "
     "I can still check availability, prices and opening hours, or manage a reservation."
 )
+GRATITUDE_REPLY = "You're welcome! Let me know if you need help with parking."
+NEGATIVE_REPLY = (
+    "No problem! Let me know if you'd like to check availability, prices, "
+    "opening hours, or make a reservation."
+)
+ACK_WITH_TOPIC_REPLY = "Great! Would you like to check another parking type or make a reservation?"
+ACK_WITHOUT_TOPIC_REPLY = (
+    "Sure! Let me know if you'd like to check availability, prices, opening hours, "
+    "or make a reservation."
+)
+UNCLEAR_MORE_INFO_REPLY = "Sure - what would you like more detail about?"
+FLOW_SWITCH_PREFIX = "No problem, let's do that instead. "
+
+# Intents that mean "start this reservation flow"; used to detect a mid-flow topic change.
+_FLOW_INTENTS = {Intent.BOOK: "booking", Intent.CANCEL: "cancel", Intent.LOOKUP: "lookup"}
+# Intents handled directly in handle() without entering a flow; last_intent/last_topic
+# are only meaningful for these, so a cue right after one of them can refer back to it.
+_TOPIC_INTENTS = (Intent.AVAILABILITY, Intent.PRICES, Intent.HOURS)
 
 
 @dataclass
 class ConversationSession:
-    """Per-conversation state; only an active flow for now (Stage 3 keys it by id)."""
+    """Per-conversation state: active flow plus enough context to interpret follow-ups."""
 
     flow: Flow | None = None
     turns: int = 0
     last_topic: Intent | None = None
+    last_intent: Intent | None = None
+    last_static_question: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,24 +118,37 @@ class Orchestrator:
             return BotReply(PROMPT_INJECTION_MESSAGE, Intent.STATIC_QUESTION)
 
         if session.flow is not None:
+            switch_intent = self._detect_flow_switch(text, session.flow.name)
+            if switch_intent is not None:
+                return self._switch_flow(switch_intent, text, session)
             return self._continue_flow(text, session)
+
+        cue = classify_cue(text)
+        if cue is not None:
+            return self._handle_cue(cue, text, session)
 
         intent = classify(text, session.last_topic)
         logger.info("intent=%s turn=%d", intent.value, session.turns)
 
-        if intent in (Intent.AVAILABILITY, Intent.PRICES, Intent.HOURS):
+        if intent in _TOPIC_INTENTS:
             session.last_topic = intent
 
         if intent is Intent.GREETING:
+            session.last_intent = intent
             return BotReply(WELCOME_MESSAGE, intent)
         if intent is Intent.AVAILABILITY:
+            session.last_intent = intent
             return BotReply(self._availability(text), intent)
         if intent is Intent.PRICES:
+            session.last_intent = intent
             return BotReply(self._prices(text), intent)
         if intent is Intent.HOURS:
+            session.last_intent = intent
             return BotReply(self._hours(text), intent)
         if intent in (Intent.BOOK, Intent.CANCEL, Intent.LOOKUP):
             return self._start_flow(intent, text, session)
+        session.last_intent = intent
+        session.last_static_question = text
         return self._static(text, intent)
 
     # ---- flows -----------------------------------------------------------------
@@ -133,6 +172,54 @@ class Orchestrator:
             session.flow = None
         intent = {"booking": Intent.BOOK, "cancel": Intent.CANCEL}.get(flow.name, Intent.LOOKUP)
         return BotReply(reply.text, intent, flow=flow.name, flow_done=reply.done)
+
+    def _detect_flow_switch(self, text: str, current_flow_name: str) -> Intent | None:
+        """Detect a clear request to switch to a *different* reservation flow mid-conversation.
+
+        Deliberately narrow: only an explicit book/cancel/lookup verb can interrupt
+        an active flow (not the bare-reference-implies-lookup fallback that
+        ``classify`` otherwise uses), so a reference typed as the literal answer
+        to the active flow's pending question is never misread as a topic change.
+        """
+        candidate = classify_explicit_action(text)
+        if candidate in _FLOW_INTENTS and _FLOW_INTENTS[candidate] != current_flow_name:
+            return candidate
+        return None
+
+    def _switch_flow(self, intent: Intent, text: str, session: ConversationSession) -> BotReply:
+        session.flow = None
+        reply = self._start_flow(intent, text, session)
+        return BotReply(
+            FLOW_SWITCH_PREFIX + reply.text,
+            reply.intent,
+            flow=reply.flow,
+            flow_done=reply.flow_done,
+        )
+
+    # ---- conversational acts (ack/gratitude/yes/no/more-info) ------------------
+    def _handle_cue(
+        self, cue: ConversationalCue, text: str, session: ConversationSession
+    ) -> BotReply:
+        if cue is ConversationalCue.GRATITUDE:
+            return BotReply(GRATITUDE_REPLY, Intent.STATIC_QUESTION)
+        if cue is ConversationalCue.NEGATIVE:
+            return BotReply(NEGATIVE_REPLY, Intent.STATIC_QUESTION)
+        if cue is ConversationalCue.MORE_INFO:
+            return self._more_info(text, session)
+        # ACKNOWLEDGEMENT or AFFIRMATIVE with no active flow: nothing is pending
+        # confirmation (that only happens inside a flow), so treat both the same way.
+        return BotReply(self._acknowledgement_reply(session), Intent.STATIC_QUESTION)
+
+    def _acknowledgement_reply(self, session: ConversationSession) -> str:
+        if session.last_topic is not None or session.last_intent is Intent.STATIC_QUESTION:
+            return ACK_WITH_TOPIC_REPLY
+        return ACK_WITHOUT_TOPIC_REPLY
+
+    def _more_info(self, text: str, session: ConversationSession) -> BotReply:
+        if session.last_static_question is None:
+            return BotReply(UNCLEAR_MORE_INFO_REPLY, Intent.STATIC_QUESTION)
+        combined = f"{session.last_static_question} {text.strip()}"
+        return self._static(combined, Intent.STATIC_QUESTION)
 
     # ---- dynamic data (SQL only, no LLM) ----------------------------------------
     def _availability(self, text: str) -> str:
@@ -203,7 +290,13 @@ def build_orchestrator(settings: Settings | None = None) -> Orchestrator:
 
 
 __all__ = [
+    "ACK_WITH_TOPIC_REPLY",
+    "ACK_WITHOUT_TOPIC_REPLY",
+    "FLOW_SWITCH_PREFIX",
+    "GRATITUDE_REPLY",
     "LLM_UNAVAILABLE_MESSAGE",
+    "NEGATIVE_REPLY",
+    "UNCLEAR_MORE_INFO_REPLY",
     "WELCOME_MESSAGE",
     "BotReply",
     "ConversationSession",

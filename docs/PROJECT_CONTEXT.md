@@ -203,5 +203,15 @@ handles `sqlite://` in-memory for tests. Public methods:
 - [x] Stage 1: Foundation + Data layer (SQL, static docs, vector store, ingestion)
 - [x] Stage 2: Chatbot core (LLM abstraction, RAG, intent routing, reservation flow)
 - [x] Stage 3: Guardrails + FastAPI + Streamlit UI
-- [ ] Stage 4: Tests + Evaluation (Recall@K, Precision@K, MRR, latency, report)
-- [ ] Stage 5: Docker, CI, README, slides, final review
+- [x] Stage 4: Tests + Evaluation — `evaluation/` has Recall@K/Precision@K
+  (`run_retrieval_eval.py`) and response-time/concurrency measurement
+  (`performance_eval.py`, plus an optional `locustfile.py`), both run against real
+  data/models with results in `evaluation/results/` and written up in
+  `docs/EVALUATION_REPORT.md`. Security test suite added in `tests/test_security.py`
+  (unauthorized access, prompt injection end to end, real-Presidio PII detection,
+  SQL-injection-shaped input). Not done: MRR was not implemented (Recall@K/Precision@K
+  cover the explicit requirement; MRR would be a cheap follow-on using the same
+  per-query ranks already computed).
+- [~] Stage 5: CI (`.github/workflows/ci.yml`, ruff + pytest + coverage, not yet run
+  on GitHub since nothing has been pushed) and README done; Docker and slides were
+  not requested in this pass and are not implemented.

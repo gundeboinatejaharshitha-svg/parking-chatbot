@@ -108,6 +108,19 @@ def test_parse_plate(text: str, expected: str | None) -> None:
     assert parse_plate(text) == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "OK", "ok", "Okay", "Alright", "Sure", "Fine", "Thanks", "Thank you", "Got it", "Yes",
+        "No", "No thanks", "Leave it", "Go back",
+    ],
+)
+def test_parse_plate_rejects_conversational_fillers(text: str) -> None:
+    # These are short enough to otherwise pass the plate shape check (e.g. "OK" is a
+    # valid-looking 2-letter plate), but they are acknowledgements, not vehicle plates.
+    assert parse_plate(text) is None
+
+
 def test_parse_booking_ref_normalises() -> None:
     assert parse_booking_ref("ref cp 100001 please") == "CP-100001"
     assert parse_booking_ref("CP-100002") == "CP-100002"
@@ -135,6 +148,13 @@ def test_parse_name() -> None:
     assert parse_name("x") is None
     assert parse_name("1234") is None
     assert parse_name("a" * 101) is None
+
+
+@pytest.mark.parametrize(
+    "text", ["OK", "ok", "Sure", "Fine", "Thanks", "Got it", "Yes", "No", "Alright"]
+)
+def test_parse_name_rejects_conversational_fillers(text: str) -> None:
+    assert parse_name(text) is None
 
 
 @pytest.mark.parametrize(

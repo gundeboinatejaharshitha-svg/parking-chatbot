@@ -122,6 +122,98 @@ def test_api_rejects_oversized_messages_and_invalid_space_types(
     assert fake_llm.calls == []
 
 
+def test_chat_full_conversation_through_the_real_api(
+    sql_store: SqlStore, vector_store: VectorStore, fake_llm: FakeLLM, clock: FakeClock
+) -> None:
+    """A realistic multi-turn conversation, driven entirely through POST /chat."""
+    client = _client(sql_store, vector_store, fake_llm, clock)
+
+    availability = client.post("/chat", json={"message": "What parking slots are available?"})
+    session_id = availability.json()["session_id"]
+    assert availability.json()["intent"] == "availability"
+
+    ack = client.post("/chat", json={"message": "OK.", "session_id": session_id})
+    assert "another parking type" in ack.json()["reply"]
+
+    thanks = client.post("/chat", json={"message": "Thanks!", "session_id": session_id})
+    assert "You're welcome" in thanks.json()["reply"]
+
+    followup = client.post(
+        "/chat", json={"message": "What about EV?", "session_id": session_id}
+    )
+    assert followup.json()["intent"] == "availability"
+    assert "8 of 20" in followup.json()["reply"] or "EV" in followup.json()["reply"]
+
+    switch_to_booking = client.post(
+        "/chat", json={"message": "I want to book a parking space.", "session_id": session_id}
+    )
+    assert switch_to_booking.json()["flow"] == "booking"
+
+    ok_as_date = client.post(
+        "/chat", json={"message": "OK", "session_id": session_id}
+    )
+    assert ok_as_date.json()["flow"] == "booking"
+    assert "couldn't read that date" in ok_as_date.json()["reply"]
+
+    assert fake_llm.calls == []  # every turn above was answered without the LLM
+
+
+def test_two_sessions_do_not_leak_conversational_context(
+    sql_store: SqlStore, vector_store: VectorStore, fake_llm: FakeLLM, clock: FakeClock
+) -> None:
+    client = _client(sql_store, vector_store, fake_llm, clock)
+
+    first = client.post("/chat", json={"message": "What parking slots are available?"})
+    first_session = first.json()["session_id"]
+
+    # A brand-new session has no prior topic, so "OK" gets the generic nudge, not the
+    # "another parking type" reply that belongs to the first session's context.
+    second_ok = client.post("/chat", json={"message": "OK."})
+    second_session = second_ok.json()["session_id"]
+    assert second_session != first_session
+    assert "another parking type" not in second_ok.json()["reply"]
+
+    first_ok = client.post("/chat", json={"message": "OK.", "session_id": first_session})
+    assert "another parking type" in first_ok.json()["reply"]
+
+
+def test_cancellation_conversation_survives_corrections_through_the_real_api(
+    sql_store: SqlStore, vector_store: VectorStore, fake_llm: FakeLLM, clock: FakeClock
+) -> None:
+    """The exact reported bug conversation, replayed through POST /chat end to end:
+    the cancellation flow must never be lost or silently switched to a lookup."""
+    client = _client(sql_store, vector_store, fake_llm, clock)
+
+    start = client.post("/chat", json={"message": "cancel"})
+    session_id = start.json()["session_id"]
+    assert start.json()["flow"] == "cancel"
+
+    for message in ["i want to cancel", "CP-123", "CP-123345", "TN 0234 FD 90088"]:
+        response = client.post(
+            "/chat", json={"message": message, "session_id": session_id}
+        )
+        assert response.json()["intent"] == "cancel"
+        assert response.json()["flow"] == "cancel"
+        assert not response.json()["flow_done"]
+
+    # Correct the reference (still mismatched: wrong plate from the previous attempt).
+    still_wrong = client.post(
+        "/chat", json={"message": "CP-100001", "session_id": session_id}
+    )
+    assert still_wrong.json()["flow"] == "cancel" and not still_wrong.json()["flow_done"]
+
+    # Now correct the plate too: reference and plate finally match a real booking.
+    corrected = client.post(
+        "/chat", json={"message": "AB12CDE", "session_id": session_id}
+    )
+    assert "Do you want to cancel it" in corrected.json()["reply"]
+
+    confirmed = client.post("/chat", json={"message": "yes", "session_id": session_id})
+    assert confirmed.json()["flow_done"] is True
+    assert "cancelled" in confirmed.json()["reply"]
+    assert fake_llm.calls == []
+
+
 def test_chat_service_errors_are_returned_without_internal_details(
     sql_store: SqlStore,
 ) -> None:

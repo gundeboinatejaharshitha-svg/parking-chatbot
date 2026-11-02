@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import datetime as dt
 
+import pytest
+
 from app.chatbot.intent import Intent
 from app.chatbot.llm import LLMError
 from app.chatbot.orchestrator import (
+    ACK_WITH_TOPIC_REPLY,
+    ACK_WITHOUT_TOPIC_REPLY,
+    FLOW_SWITCH_PREFIX,
+    GRATITUDE_REPLY,
     LLM_UNAVAILABLE_MESSAGE,
+    NEGATIVE_REPLY,
+    UNCLEAR_MORE_INFO_REPLY,
     WELCOME_MESSAGE,
     BotReply,
     ConversationSession,
@@ -197,6 +205,20 @@ def test_availability_followup_without_keyword_reuses_topic(
     assert fake_llm.calls == []
 
 
+def test_price_followup_after_availability_uses_sql_not_llm(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("Are EV slots available?", session)
+    reply = orch.handle("How much does it cost?", session)
+
+    assert reply.intent is Intent.PRICES
+    assert "£" in reply.text
+    assert fake_llm.calls == []
+
+
 def test_followup_topic_does_not_leak_into_an_unrelated_static_question(
     sql_store, vector_store, fake_llm, clock
 ) -> None:
@@ -210,8 +232,383 @@ def test_followup_topic_does_not_leak_into_an_unrelated_static_question(
     assert reply.intent is Intent.STATIC_QUESTION and reply.text == "Use the Station Entrance."
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What parking slots are available?",
+        "What are the available slots for parking?",
+        "Do you have any available parking spaces?",
+        "Is parking available?",
+        "Can I get a parking slot?",
+        "Show me the parking availability.",
+        "How many parking spaces are vacant?",
+        "Are there any empty parking spots?",
+        "I need to know the available parking spaces.",
+        "What is the current parking capacity?",
+        "Can you check available slots?",
+    ],
+)
+def test_availability_phrasing_variations_use_real_sql_not_llm(
+    text: str, sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    expected = sql_store.get_availability()
+    parts = [f"{r.available} of {r.total}" for r in expected]
+
+    reply = orch.handle(text, ConversationSession())
+
+    assert reply.intent is Intent.AVAILABILITY
+    assert all(part in reply.text for part in parts)
+    assert fake_llm.calls == []
+
+
 def test_hours_for_tomorrow_uses_injected_clock(sql_store, vector_store, fake_llm, clock) -> None:
     clock.now = dt.datetime(2030, 1, 12, 9, 0)  # Saturday -> tomorrow is Sunday
     orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
     reply = orch.handle("are you open tomorrow?", ConversationSession())
     assert "Sunday: 08:00-18:00" in reply.text
+
+
+# ---- conversational behaviour: acknowledgements, confirmations, topic changes --------
+
+
+def test_ok_after_availability_answer_is_acknowledged_not_sent_to_rag(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("What parking slots are available?", session)
+    reply = orch.handle("OK.", session)
+
+    assert reply.text == ACK_WITH_TOPIC_REPLY
+    assert fake_llm.calls == []
+
+
+def test_thanks_after_an_answer_gets_a_gratitude_reply(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("What parking slots are available?", session)
+    reply = orch.handle("Thanks.", session)
+
+    assert reply.text == GRATITUDE_REPLY
+    assert fake_llm.calls == []
+
+
+def test_yes_and_no_without_a_pending_flow_question_do_not_hit_rag(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+
+    yes_reply = orch.handle("Yes", ConversationSession())
+    no_reply = orch.handle("No", ConversationSession())
+
+    assert yes_reply.text == ACK_WITHOUT_TOPIC_REPLY
+    assert no_reply.text == NEGATIVE_REPLY
+    assert fake_llm.calls == []
+
+
+def test_ok_while_waiting_for_a_booking_detail_is_rejected_not_accepted(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I want to book parking.", session)
+    reply = orch.handle("OK.", session)
+
+    assert reply.flow == "booking" and session.flow is not None
+    assert "couldn't read that date" in reply.text
+
+    # The plate step must reject "OK" too, not silently accept it as a plate.
+    _chat(orch, session, "tomorrow", "10am to 12", "standard", "Alice Morgan")
+    reply = orch.handle("OK", session)
+    assert reply.flow == "booking" and session.flow is not None
+    assert "vehicle plate" in reply.text
+
+
+def test_ok_while_waiting_for_a_cancellation_detail_is_rejected_not_accepted(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I want to cancel my booking.", session)
+    reply = orch.handle("OK.", session)
+
+    assert reply.flow == "cancel" and session.flow is not None
+    assert "booking reference" in reply.text
+
+
+def test_explicit_booking_confirmation_creates_the_reservation(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    before = sql_store.get_availability("standard")[0].available
+
+    orch.handle("I want to book parking.", session)
+    _chat(orch, session, "tomorrow", "10am to 12", "standard", "Alice Morgan", "AB12CDE")
+    reply = orch.handle("Yes, confirm my booking.", session)
+
+    assert reply.flow_done and session.flow is None
+    assert "confirmed" in reply.text and "CP-" in reply.text
+    assert sql_store.get_availability("standard")[0].available == before - 1
+
+
+def test_ambiguous_acknowledgement_never_confirms_a_booking_early(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    before = sql_store.get_availability("standard")[0].available
+
+    orch.handle("I want to book parking.", session)
+    # "OK" at every step before the summary is shown must never be read as consent
+    # to book; the flow must still be open and nothing may have been reserved.
+    for _ in range(3):
+        reply = orch.handle("OK", session)
+        assert not reply.flow_done
+        assert session.flow is not None
+        assert sql_store.get_availability("standard")[0].available == before
+
+
+def test_tell_me_more_after_rag_answer_expands_on_it(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    fake_llm.reply = "Use the Station Entrance."
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("which entrance is closest to the station", session)
+    reply = orch.handle("Tell me more.", session)
+
+    assert reply.intent is Intent.STATIC_QUESTION
+    assert reply.text == "Use the Station Entrance."
+    assert len(fake_llm.calls) == 2
+    # The follow-up question sent to the LLM still carries the original question.
+    assert "entrance" in fake_llm.calls[1][1].lower()
+
+
+def test_more_info_with_no_prior_question_asks_for_clarification(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    reply = orch.handle("Tell me more.", ConversationSession())
+    assert reply.text == UNCLEAR_MORE_INFO_REPLY
+    assert fake_llm.calls == []
+
+
+def test_what_about_ev_after_general_availability_answer(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("What parking slots are available?", session)
+    reply = orch.handle("What about EV?", session)
+
+    assert reply.intent is Intent.AVAILABILITY
+    assert "8 of 20 EV" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_what_about_standard_after_ev_availability_answer(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("Are EV slots available?", session)
+    reply = orch.handle("What about standard?", session)
+
+    assert reply.intent is Intent.AVAILABILITY
+    assert "84 of 120 standard" in reply.text
+    assert fake_llm.calls == []
+
+
+def test_changing_from_availability_to_booking_starts_booking_flow(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("Are EV slots available?", session)
+    reply = orch.handle("I want to book a parking space.", session)
+
+    assert reply.intent is Intent.BOOK
+    assert reply.flow == "booking" and session.flow is not None
+
+
+def test_changing_from_booking_to_cancellation_switches_flow(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I want to book parking.", session)
+    reply = orch.handle("I want to cancel my booking instead.", session)
+
+    assert reply.intent is Intent.CANCEL
+    assert reply.flow == "cancel" and session.flow is not None
+    assert reply.text.startswith(FLOW_SWITCH_PREFIX)
+    # Nothing from the abandoned booking draft leaked into the new flow.
+    assert "booking reference" in reply.text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["asdkjhasdkjh random nonsense", "purple elephant quantum"],
+)
+def test_unknown_messages_do_not_crash_and_stay_on_rag_path(
+    text: str, sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    reply = orch.handle(text, ConversationSession())
+    assert reply.intent is Intent.STATIC_QUESTION
+    assert reply.text  # some safe, non-empty reply; never raises
+
+
+def test_two_sessions_keep_separate_conversational_context(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session_a = ConversationSession()
+    session_b = ConversationSession()
+
+    orch.handle("What parking slots are available?", session_a)
+    # Session B never asked anything, so "OK" there has no topic to acknowledge.
+    reply_b = orch.handle("OK.", session_b)
+    reply_a = orch.handle("OK.", session_a)
+
+    assert reply_b.text == ACK_WITHOUT_TOPIC_REPLY
+    assert reply_a.text == ACK_WITH_TOPIC_REPLY
+    assert session_a.last_topic is Intent.AVAILABILITY
+    assert session_b.last_topic is None
+
+
+# ---- cancellation conversation-state regressions (reported bug) ---------------------
+
+
+def test_a_bare_reference_mid_cancellation_is_not_read_as_switch_to_lookup(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    """Regression for the reported bug: a bare reference typed as the literal
+    answer to the active CancelFlow's pending question must not be misread as
+    "switch to LookupFlow" just because ``classify`` defaults a bare reference
+    to LOOKUP for a *fresh* message."""
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("cancel", session)
+    reply = orch.handle("CP-100001", session)
+
+    assert reply.intent is Intent.CANCEL
+    assert reply.flow == "cancel" and session.flow is not None
+    assert not reply.text.startswith(FLOW_SWITCH_PREFIX)
+    assert "plate" in reply.text.lower()
+
+
+def test_second_session_does_not_inherit_cancellation_state(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session_a = ConversationSession()
+    session_b = ConversationSession()
+
+    orch.handle("I want to cancel my booking.", session_a)
+    orch.handle("CP-100001", session_a)
+    assert session_a.flow is not None and session_a.flow.name == "cancel"
+
+    # A fresh session has no active flow and no pending reference/plate question.
+    assert session_b.flow is None
+    reply_b = orch.handle("AB12CDE", session_b)
+    assert reply_b.intent is not Intent.CANCEL
+    assert session_b.flow is None
+
+
+def test_changing_from_availability_to_cancellation_starts_cancel_flow(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("What parking slots are available?", session)
+    reply = orch.handle("I want to cancel my booking.", session)
+
+    assert reply.intent is Intent.CANCEL
+    assert reply.flow == "cancel" and session.flow is not None
+
+
+def test_changing_from_cancellation_to_booking_switches_flow(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("I want to cancel my booking.", session)
+    reply = orch.handle("Actually, I want to book a parking space.", session)
+
+    assert reply.intent is Intent.BOOK
+    assert reply.flow == "booking" and session.flow is not None
+    assert reply.text.startswith(FLOW_SWITCH_PREFIX)
+
+
+def test_no_accidental_cancellation_through_a_confusing_cancellation_conversation(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    """Replays the reported bug conversation end-to-end: nothing is ever
+    cancelled, and the real seeded reservation survives untouched."""
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+    before = sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status
+
+    for message in [
+        "cancel",
+        "i want to cancel",
+        "CP-123",
+        "CP-123345",
+        "TN 0234 FD 90088",
+        "TN 0234 FD 9004",
+        "i want to cancel",
+        "i have no booking reference",
+    ]:
+        reply = orch.handle(message, session)
+        assert reply.intent is Intent.CANCEL
+        assert session.flow is not None and session.flow.name == "cancel"
+
+    assert sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status == before
+    assert fake_llm.calls == []
+
+
+def test_exit_cancellation_then_availability_request_works_normally(
+    sql_store, vector_store, fake_llm, clock
+) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("cancel", session)
+    orch.handle("I don't have it.", session)
+    exit_reply = orch.handle("no", session)
+    assert exit_reply.flow_done and session.flow is None
+
+    reply = orch.handle("What parking slots are available?", session)
+    assert reply.intent is Intent.AVAILABILITY and session.flow is None
+    assert sql_store.get_reservation_for_user("CP-100001", "AB12CDE").status == "confirmed"
+
+
+def test_restart_cancellation_after_exit(sql_store, vector_store, fake_llm, clock) -> None:
+    orch = _orchestrator(sql_store, vector_store, fake_llm, clock)
+    session = ConversationSession()
+
+    orch.handle("cancel", session)
+    orch.handle("I don't have it.", session)
+    orch.handle("no", session)
+    assert session.flow is None
+
+    reply = orch.handle("cancel", session)
+    assert reply.intent is Intent.CANCEL and session.flow is not None
+    assert "booking reference" in reply.text

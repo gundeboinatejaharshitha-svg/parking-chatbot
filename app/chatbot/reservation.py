@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
+from app.chatbot.intent import ConversationalCue, classify_cue
 from app.chatbot.parsing import (
     parse_booking_ref,
     parse_date,
@@ -357,17 +359,107 @@ class BookingFlow:
 # --------------------------------------------------------------------------
 # Lookup and cancel (reference + plate always required together)
 # --------------------------------------------------------------------------
+class RefPlateState(str, Enum):
+    """Where a reference+plate flow is in its lifecycle.
+
+    Derived from the flow's own fields rather than stored separately, so it can
+    never drift out of sync with them. ``COMPLETED``/``ABORTED`` are not states
+    of a live flow object: they are communicated once via ``FlowReply.done`` and
+    the orchestrator then discards the flow, so there is nothing left to query.
+    """
+
+    WAITING_FOR_REFERENCE = "waiting_for_reference"
+    WAITING_FOR_PLATE = "waiting_for_plate"
+    RETRY_AFTER_MISMATCH = "retry_after_mismatch"
+    WAITING_FOR_CONFIRMATION = "waiting_for_confirmation"
+
+
 NOT_FOUND_REPLY = (
     "I couldn't find a reservation matching that booking reference and plate. "
     "Please check both and try again."
 )
+NO_REFERENCE_ALTERNATIVE_REPLY = (
+    "No problem. Without it, I cannot securely identify your booking - I can't search by name "
+    "or plate alone. It's on your booking confirmation (format CP-123456). "
+    "Would you like to keep trying, or exit this cancellation?"
+)
+NO_PLATE_ALTERNATIVE_REPLY = (
+    "No problem. I need the vehicle plate that's on the booking to verify it's yours - "
+    "you'll find it on your booking confirmation or on the vehicle itself. "
+    "Would you like to keep trying, or exit this cancellation?"
+)
+RETRY_NO_NEW_VALUE_REPLY = (
+    "Please give the corrected booking reference and/or vehicle plate so I can try again."
+)
+EXIT_STOPPED_MESSAGE = (
+    "Cancellation process stopped. Your reservation remains unchanged. How else can I help?"
+)
+RETRY_LIMIT_MESSAGE = (
+    "I still couldn't verify those details after several attempts. For your security, I've "
+    "stopped this cancellation. Your reservation remains unchanged. How else can I help?"
+)
+MAX_MISMATCH_ATTEMPTS = 3
+
+_REFERENCE_TOPIC_WORDS = ("reference", "booking ref", "confirmation", "booking id", "ref number")
+_PLATE_TOPIC_WORDS = ("plate", "registration", "reg number", "number plate")
+_DONT_KNOW = re.compile(
+    r"\b(don'?t have|do not have|have no|don'?t know|do not know|don'?t remember|"
+    r"do not remember|no idea|lost|forgot|can'?t find|cannot find|unable to find|"
+    r"not available)\b",
+    re.IGNORECASE,
+)
+_EXIT_ONLY_PHRASES = frozenset({"leave it", "go back", "i changed my mind"})
+_RESTATE_CANCEL_INTENT = re.compile(r"\bcancel(l?ing|l?ed|s)?\b", re.IGNORECASE)
+_RESTATE_LOOKUP_INTENT = re.compile(
+    r"\b(look ?up|find|check|show|view|see)\b.{0,20}\b(my )?(booking|reservation)\b",
+    re.IGNORECASE,
+)
+
+
+def _mentions_any(text: str, words: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(word in lowered for word in words)
+
+
+def _is_dont_know(text: str, topic_words: tuple[str, ...] | None) -> bool:
+    # Matches phrasing like "I don't have/know/lost/forgot/remember my <reference|plate>",
+    # or "it's not available". ``topic_words=None`` skips the topic check: the caller's own
+    # state (waiting for the reference vs. the plate) already disambiguates which is meant.
+    if _DONT_KNOW.search(text) is None:
+        return False
+    return topic_words is None or _mentions_any(text, topic_words)
+
+
+def _wants_to_exit(text: str) -> bool:
+    # "cancel"/"stop"/"never mind"/etc. are already caught by ``_is_abort`` before this is
+    # ever reached; this covers the remaining exit phrasing specific to declining to
+    # continue a reference/plate request ("no", "I don't want to cancel", "leave it").
+    lowered = text.strip().lower().rstrip("!.,")
+    if lowered in _EXIT_ONLY_PHRASES:
+        return True
+    return classify_cue(text) is ConversationalCue.NEGATIVE
+
+
 @dataclass
 class _RefPlateFlow:
-    """Shared collection of booking reference and plate."""
+    """Shared collection of booking reference and plate, with retry on a mismatch."""
 
     store: SqlStore
     booking_ref: str | None = None
     car_plate: str | None = None
+    retry_after_mismatch: bool = False
+    mismatch_count: int = 0
+
+    @property
+    def state(self) -> RefPlateState:
+        """The information this flow is currently waiting on."""
+        if self.retry_after_mismatch:
+            return RefPlateState.RETRY_AFTER_MISMATCH
+        if self.booking_ref is None:
+            return RefPlateState.WAITING_FOR_REFERENCE
+        if self.car_plate is None:
+            return RefPlateState.WAITING_FOR_PLATE
+        return RefPlateState.WAITING_FOR_CONFIRMATION
 
     def start(self, text: str) -> FlowReply:
         """Pre-fill reference/plate from the opening message, then continue."""
@@ -376,23 +468,81 @@ class _RefPlateFlow:
         return self._advance()
 
     def handle(self, text: str) -> FlowReply:
-        """Consume one user message."""
+        """Consume one user message, routed by the flow's current state."""
         if _is_abort(text):
+            logger.info("%s flow aborted at state %s", self.name, self.state.value)
             return FlowReply(ABORT_MESSAGE, done=True)
-        if self.booking_ref is None:
-            ref = parse_booking_ref(text)
-            if ref is None:
-                return FlowReply("Please give the booking reference in the form CP-123456.")
-            self.booking_ref = ref
-            return self._advance()
-        if self.car_plate is None:
-            plate = parse_plate(text)
-            if plate is None:
-                return FlowReply("Please give the vehicle plate (e.g. AB12CDE).")
-            self.car_plate = plate
-            return self._advance()
+
+        state = self.state
+        if state is RefPlateState.RETRY_AFTER_MISMATCH:
+            return self._handle_retry(text)
+        if state is RefPlateState.WAITING_FOR_REFERENCE:
+            return self._handle_reference(text)
+        if state is RefPlateState.WAITING_FOR_PLATE:
+            return self._handle_plate(text)
         return self._after_identified(text)
 
+    # ---- per-state input handling --------------------------------------------
+    def _handle_reference(self, text: str) -> FlowReply:
+        ref = parse_booking_ref(text)
+        if ref is not None:
+            self.booking_ref = ref
+            return self._advance()
+        if _is_dont_know(text, None):
+            return FlowReply(NO_REFERENCE_ALTERNATIVE_REPLY)
+        if _wants_to_exit(text):
+            return FlowReply(EXIT_STOPPED_MESSAGE, done=True)
+        if self._is_conversational_filler(text) or self._restates_own_intent(text):
+            return FlowReply("Sure - what is the booking reference? It should look like CP-123456.")
+        return FlowReply(
+            "I couldn't read that as a booking reference. It should look like CP-123456. "
+            "What is your booking reference?"
+        )
+
+    def _handle_plate(self, text: str) -> FlowReply:
+        plate = parse_plate(text)
+        if plate is not None:
+            self.car_plate = plate
+            return self._advance()
+        if _is_dont_know(text, None):
+            return FlowReply(NO_PLATE_ALTERNATIVE_REPLY)
+        if _wants_to_exit(text):
+            return FlowReply(EXIT_STOPPED_MESSAGE, done=True)
+        if self._is_conversational_filler(text) or self._restates_own_intent(text):
+            return FlowReply("Sure - I still need the vehicle registration plate for this booking.")
+        return FlowReply(
+            "I couldn't read that as a vehicle plate (e.g. AB12CDE). "
+            "What is the vehicle registration plate?"
+        )
+
+    def _handle_retry(self, text: str) -> FlowReply:
+        """After a mismatch: accept a corrected reference and/or plate, then retry."""
+        new_ref = parse_booking_ref(text)
+        new_plate = parse_plate(text)
+        if new_ref is None and new_plate is None:
+            if _is_dont_know(text, _REFERENCE_TOPIC_WORDS):
+                return FlowReply(NO_REFERENCE_ALTERNATIVE_REPLY)
+            if _is_dont_know(text, _PLATE_TOPIC_WORDS):
+                return FlowReply(NO_PLATE_ALTERNATIVE_REPLY)
+            if _wants_to_exit(text):
+                return FlowReply(EXIT_STOPPED_MESSAGE, done=True)
+            return FlowReply(RETRY_NO_NEW_VALUE_REPLY)
+        if new_ref is not None:
+            self.booking_ref = new_ref
+        if new_plate is not None:
+            self.car_plate = new_plate
+        self.retry_after_mismatch = False
+        return self._identified()
+
+    @staticmethod
+    def _is_conversational_filler(text: str) -> bool:
+        return classify_cue(text) is ConversationalCue.ACKNOWLEDGEMENT
+
+    def _restates_own_intent(self, text: str) -> bool:
+        pattern = _RESTATE_CANCEL_INTENT if self.name == "cancel" else _RESTATE_LOOKUP_INTENT
+        return pattern.search(text) is not None
+
+    # ---- advancing and fetching -----------------------------------------------
     def _advance(self) -> FlowReply:
         if self.booking_ref is None:
             return FlowReply("What is the booking reference? (format CP-123456)")
@@ -407,7 +557,20 @@ class _RefPlateFlow:
         except ReservationNotFoundError:
             return None
 
-    def _identified(self) -> FlowReply:  # pragma: no cover - overridden
+    def _identified(self) -> FlowReply:
+        info = self._fetch()
+        if info is None:
+            self.mismatch_count += 1
+            if self.mismatch_count >= MAX_MISMATCH_ATTEMPTS:
+                logger.info("%s flow: retry limit reached, stopping", self.name)
+                return FlowReply(RETRY_LIMIT_MESSAGE, done=True)
+            logger.info("%s flow: no match, awaiting a correction", self.name)
+            self.retry_after_mismatch = True
+            return FlowReply(NOT_FOUND_REPLY)
+        self.retry_after_mismatch = False
+        return self._found(info)
+
+    def _found(self, info: ReservationInfo) -> FlowReply:  # pragma: no cover - overridden
         raise NotImplementedError
 
     def _after_identified(self, text: str) -> FlowReply:  # pragma: no cover - overridden
@@ -427,10 +590,7 @@ class LookupFlow(_RefPlateFlow):
 
     name = "lookup"
 
-    def _identified(self) -> FlowReply:
-        info = self._fetch()
-        if info is None:
-            return FlowReply(NOT_FOUND_REPLY, done=True)
+    def _found(self, info: ReservationInfo) -> FlowReply:
         return FlowReply(f"Found it. {_describe(info)}", done=True, outcome=info)
 
     def _after_identified(self, text: str) -> FlowReply:  # pragma: no cover - lookup ends early
@@ -442,10 +602,7 @@ class CancelFlow(_RefPlateFlow):
 
     name = "cancel"
 
-    def _identified(self) -> FlowReply:
-        info = self._fetch()
-        if info is None:
-            return FlowReply(NOT_FOUND_REPLY, done=True)
+    def _found(self, info: ReservationInfo) -> FlowReply:
         if info.status != "confirmed":
             return FlowReply(f"{_describe(info)} It is already cancelled.", done=True)
         return FlowReply(
@@ -481,7 +638,13 @@ class CancelFlow(_RefPlateFlow):
 
 __all__ = [
     "ABORT_MESSAGE",
+    "EXIT_STOPPED_MESSAGE",
+    "MAX_MISMATCH_ATTEMPTS",
     "NOT_FOUND_REPLY",
+    "NO_PLATE_ALTERNATIVE_REPLY",
+    "NO_REFERENCE_ALTERNATIVE_REPLY",
+    "RETRY_LIMIT_MESSAGE",
+    "RETRY_NO_NEW_VALUE_REPLY",
     "SPACE_TYPE_LABELS",
     "BookingDraft",
     "BookingFlow",
@@ -490,4 +653,5 @@ __all__ = [
     "Flow",
     "FlowReply",
     "LookupFlow",
+    "RefPlateState",
 ]

@@ -61,6 +61,21 @@ _PLATE_STOPWORDS = frozenset(
 _NAME_PREFIX = re.compile(r"^(?:my name is|i am|i'm|it's|its|this is|name:?)\s+", re.IGNORECASE)
 _NAME_ALLOWED = re.compile(r"^[A-Za-z][A-Za-z' .-]{0,98}[A-Za-z.]$")
 
+# Conversational acknowledgements/fillers, plus flow-trigger and abort words, that happen
+# to be short enough to otherwise pass the plate/name shape checks below (e.g. "OK" is 2
+# letters and "cancel" is 6, same length as a real plate could be). A message that is
+# *entirely* one of these is never a plate or name, even though a real sentence containing
+# the word (e.g. "cancel my booking") is already protected separately by _PLATE_STOPWORDS.
+_CONVERSATIONAL_FILLERS = frozenset(
+    (
+        "OK", "OKAY", "ALRIGHT", "SURE", "FINE", "YES", "YEAH", "YEP", "YUP",
+        "NO", "NOPE", "NAH", "NO THANKS", "THANKS", "THANK YOU", "GOT IT", "UNDERSTOOD",
+        "CORRECT", "ABSOLUTELY", "CANCEL", "CANCELLATION", "CALL OFF", "BOOK",
+        "RESERVE", "LOOKUP", "LOOK UP", "STOP", "QUIT", "EXIT", "ABORT",
+        "NEVER MIND", "NEVERMIND", "LEAVE IT", "GO BACK",
+    )
+)  # fmt: skip
+
 
 # --------------------------------------------------------------------------
 # Dates
@@ -229,6 +244,8 @@ def parse_plate(text: str) -> str | None:
     requires a digit to avoid treating arbitrary words as plates.
     """
     raw = text.strip()
+    if raw.upper() in _CONVERSATIONAL_FILLERS:
+        return None
     if _PLATE_INPUT.fullmatch(raw):
         candidate = normalize_plate(raw)
         if _is_plate(candidate) and not _is_booking_ref_only(raw):
@@ -278,6 +295,8 @@ def _is_plate(candidate: str) -> bool:
 def parse_name(text: str) -> str | None:
     """Extract a customer name ("my name is Alice Morgan" -> "Alice Morgan")."""
     cleaned = _NAME_PREFIX.sub("", text.strip()).strip().rstrip(".")
+    if cleaned.upper() in _CONVERSATIONAL_FILLERS:
+        return None
     if _NAME_ALLOWED.match(cleaned) and 2 <= len(cleaned) <= 100:
         return cleaned
     return None

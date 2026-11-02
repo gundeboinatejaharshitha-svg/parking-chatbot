@@ -29,6 +29,21 @@ class Intent(str, Enum):
     STATIC_QUESTION = "static_question"
 
 
+class ConversationalCue(str, Enum):
+    """A short conversational act rather than an information request.
+
+    Detection here is deliberately context-free (just the words used); what a
+    cue *means* depends on the conversation state (is a flow waiting for this
+    answer? did we just answer a question?) and is decided by the caller.
+    """
+
+    ACKNOWLEDGEMENT = "acknowledgement"
+    GRATITUDE = "gratitude"
+    AFFIRMATIVE = "affirmative"
+    NEGATIVE = "negative"
+    MORE_INFO = "more_info"
+
+
 def _any(*patterns: str) -> re.Pattern[str]:
     return re.compile("|".join(rf"(?:{p})" for p in patterns), re.IGNORECASE)
 
@@ -49,11 +64,15 @@ _POLICY_SIGNAL = _any(
     r"\bno[- ]show\b",
 )
 
-_CANCEL_ACTION = _any(r"\bcancel(l?ing|l?ed|s)?\b", r"\bcall off\b")
+_CANCEL_ACTION = _any(
+    r"\bcancel(l?ing|l?ed|s)?\b",
+    r"\bcall off\b",
+    r"\b(don'?t|do not|no longer) need\b.{0,25}\b(parking|space|slot|spot|booking|reservation)\b",
+)
 _LOOKUP_ACTION = _any(
     r"\b(look ?up|find|check|show|view|see|get|retrieve|status of|details of|where is)\b"
     r".{0,30}\b(my )?(booking|reservation)\b",
-    r"\b(my )?(booking|reservation) (status|details)\b",
+    r"\b(my )?(booking|reservation) (status|details|confirmation)\b",
     r"\bdo i have (a )?(booking|reservation)\b",
 )
 _BOOK_ACTION = _any(
@@ -61,6 +80,8 @@ _BOOK_ACTION = _any(
     r"\b(make|create|place|need|want|like|get|start)\b.{0,20}\b(booking|reservation)\b",
     r"\b(new|a) (booking|reservation)\b",
     r"\bbooking\b.{0,10}\bfor (tomorrow|today|\d|mon|tue|wed|thu|fri|sat|sun)",
+    r"\bhelp\b.{0,10}\bpark\b.{0,10}\b(my|the|a) car\b",
+    r"\b(need|want)\b.{0,10}\bparking\b\s+for\s+(tomorrow|today|next|this|\d|mon|tue|wed|thu|fri|sat|sun)",
 )
 
 _HOURS = _any(
@@ -70,7 +91,7 @@ _HOURS = _any(
     r"\b(hours|24/7|24 hours)\b",
 )
 _PRICES = _any(
-    r"\b(price|prices|pricing|cost|costs|rate|rates|tariff|tariffs)\b",
+    r"\b(price|prices|pricing|cost|costs|rate|rates|tariff|tariffs|charges?)\b",
     r"\bhow much\b",
     r"\bper (hour|day)\b",
     r"\b(hourly|daily) (rate|price|charge)\b",
@@ -79,16 +100,69 @@ _PRICES = _any(
 _AVAILABILITY = _any(
     r"\bavailab\w*\b",
     r"\bvacan\w*\b",
-    r"\b(spaces?|spots?|bays?|places?)\b.{0,15}\b(left|free|available|open)\b",
-    r"\b(free|any|empty)\b.{0,10}\b(spaces?|spots?|bays?|places?)\b",
-    r"\bhow many\b.{0,20}\b(spaces?|spots?|bays?)\b",
-    r"\b(is|are) there (any )?(room|space|spaces|spots?)\b",
+    r"\bcapacit\w*\b",
+    r"\b(spaces?|spots?|bays?|places?|slots?)\b.{0,15}\b(left|free|available|open)\b",
+    r"\b(free|any|empty)\b.{0,10}\b(spaces?|spots?|bays?|places?|slots?)\b",
+    r"\bhow many\b.{0,20}\b(spaces?|spots?|bays?|slots?)\b",
+    r"\b(is|are) there (any )?(room|space|spaces|spots?|slots?)\b",
+    r"\bcan (i|you|we) (get|check|find)\b.{0,20}\b(space|spot|slot|bay)s?\b",
     r"\bfull\b",
 )
 _POLICY_PRICE_CONTEXT = _any(
     r"\b(cancel\w*|refund\w*|penalt\w*|overstay\w*|fine|late|no[- ]show)\b"
 )
+# Genuine policy questions about availability (not a live-data request), e.g. "is there a
+# waiting list". The bare "what are the" / "what is the" phrasing used to block *every*
+# availability or hours question that happened to use it (see _POLICY_SIGNAL); those two
+# intents now use this narrower context instead, matching how _POLICY_PRICE_CONTEXT already
+# scopes the prices intent.
+_POLICY_AVAILABILITY_CONTEXT = _any(
+    r"\bwait(ing)?[- ]?list\b",
+    r"\bwhat happens\b.{0,25}\b(full|no (space|spots?|availability))\b",
+)
 _STATIC_HOURS_CONTEXT = _any(r"\b(overnight|24 hours (before|or more)|grace)\b")
+
+# Bare conversational acts. Matched against the *whole* trimmed message (not just a
+# substring search) so that a real sentence that happens to contain "ok" or "yes" still
+# falls through to ``classify`` instead of being swallowed as small talk.
+_ACK_WORDS = frozenset({"ok", "okay", "alright", "got it", "understood", "sure", "fine"})
+_AFFIRMATIVE_WORDS = frozenset({"yes", "yeah", "yep", "yup", "correct", "absolutely", "right"})
+_NEGATIVE_WORDS = frozenset({"no", "nope", "nah", "not really", "no thanks", "no thank you"})
+_NEGATIVE_WANT_PREFIX = re.compile(r"^i (don'?t|do not) want to\b")
+_GRATITUDE_PHRASE = re.compile(
+    r"^(thanks( a lot| very much)?|thank you( very much)?|many thanks|thx)$"
+)
+_MORE_INFO = _any(
+    r"^tell me more\b",
+    r"^(can you )?explain (that|this|it)\b",
+    r"\bcan you elaborate\b",
+    r"^what else\b",
+    r"^give me more details?\b",
+    r"\bmore (info|information|details?)\b",
+    r"\b(simpler|simple) terms\b",
+)
+
+
+def classify_cue(text: str) -> ConversationalCue | None:
+    """Detect a short conversational act (ack/gratitude/yes/no/more-info).
+
+    Returns ``None`` for anything else, including real questions that happen to
+    contain one of these words ("Can I cancel my booking, yes or no?").
+    """
+    normalized = text.strip().lower().rstrip("!.,;: ")
+    if not normalized:
+        return None
+    if _GRATITUDE_PHRASE.match(normalized):
+        return ConversationalCue.GRATITUDE
+    if _MORE_INFO.search(normalized):
+        return ConversationalCue.MORE_INFO
+    if normalized in _ACK_WORDS:
+        return ConversationalCue.ACKNOWLEDGEMENT
+    if normalized in _AFFIRMATIVE_WORDS:
+        return ConversationalCue.AFFIRMATIVE
+    if normalized in _NEGATIVE_WORDS or _NEGATIVE_WANT_PREFIX.match(normalized):
+        return ConversationalCue.NEGATIVE
+    return None
 
 
 def classify(text: str, last_topic: Intent | None = None) -> Intent:
@@ -119,11 +193,11 @@ def classify(text: str, last_topic: Intent | None = None) -> Intent:
     if wants_book and not policy:
         return Intent.BOOK
 
-    if _HOURS.search(message) and not _STATIC_HOURS_CONTEXT.search(message) and not policy:
+    if _HOURS.search(message) and not _STATIC_HOURS_CONTEXT.search(message):
         return Intent.HOURS
     if _PRICES.search(message) and not _POLICY_PRICE_CONTEXT.search(message):
         return Intent.PRICES
-    if _AVAILABILITY.search(message) and not policy:
+    if _AVAILABILITY.search(message) and not _POLICY_AVAILABILITY_CONTEXT.search(message):
         return Intent.AVAILABILITY
 
     if not policy and last_topic in (Intent.AVAILABILITY, Intent.PRICES):
@@ -135,4 +209,32 @@ def classify(text: str, last_topic: Intent | None = None) -> Intent:
     return Intent.STATIC_QUESTION
 
 
-__all__ = ["Intent", "classify"]
+def classify_explicit_action(text: str) -> Intent | None:
+    """Like ``classify``, but only ever returns BOOK/CANCEL/LOOKUP on an explicit verb.
+
+    ``classify`` also returns LOOKUP for a bare booking reference with no other
+    signal (a reasonable default for a fresh message), but that fallback means a
+    bare reference typed as the literal answer to an *active* flow's pending
+    question would look like a request to switch flows. Callers deciding whether
+    to interrupt an active flow should use this instead.
+    """
+    message = text.strip()
+    if not message:
+        return None
+    policy = _POLICY_SIGNAL.search(message) is not None
+    if _CANCEL_ACTION.search(message) and not policy:
+        return Intent.CANCEL
+    if _LOOKUP_ACTION.search(message) and not policy:
+        return Intent.LOOKUP
+    if _BOOK_ACTION.search(message) and not policy:
+        return Intent.BOOK
+    return None
+
+
+__all__ = [
+    "ConversationalCue",
+    "Intent",
+    "classify",
+    "classify_cue",
+    "classify_explicit_action",
+]
